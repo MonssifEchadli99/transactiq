@@ -27,6 +27,8 @@ The authorization policy produces the final authorization decision.
 
 A non-fraud failure can decline a `CLEAR` transaction without opening a fraud case.
 
+When a non-fraud failure coexists with `REVIEW` or `HIGH_RISK`, the non-fraud failure remains the primary decline reason, while a fraud case is still required.
+
 ## Ledger responsibility
 
 The ledger records the request, fraud assessment, final decision, reason, timestamps, and associated case identifier when applicable. It records the outcome but does not make the decision.
