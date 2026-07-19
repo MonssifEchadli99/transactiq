@@ -1,5 +1,9 @@
 # Idempotency and Duplicate Requests
 
+> **Implementation note:** The current demo-only in-memory ledger intentionally appends repeated
+> request identifiers as separate entries. It does not yet implement the target V1 idempotency
+> behavior documented below.
+
 ## Same requestId with identical request data
 
 - Process the authorization only once.

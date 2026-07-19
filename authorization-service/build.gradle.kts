@@ -1,5 +1,7 @@
 plugins {
     java
+    id("org.springframework.boot") version "4.1.0"
+    id("io.spring.dependency-management") version "1.1.7"
 }
 
 java {
@@ -9,8 +11,11 @@ java {
 }
 
 dependencies {
-    testImplementation("org.junit.jupiter:junit-jupiter:5.12.2")
-    testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.12.2")
+    implementation("org.springframework.boot:spring-boot-starter-web")
+    implementation("org.springframework.boot:spring-boot-starter-validation")
+
+    testImplementation("org.springframework.boot:spring-boot-starter-test")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
 tasks.test {
