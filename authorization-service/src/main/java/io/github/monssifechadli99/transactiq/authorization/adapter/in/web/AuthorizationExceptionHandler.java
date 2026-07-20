@@ -5,6 +5,7 @@ import io.github.monssifechadli99.transactiq.authorization.api.AuthorizationErro
 import io.github.monssifechadli99.transactiq.authorization.api.AuthorizationErrorResponse.ErrorCode;
 import io.github.monssifechadli99.transactiq.authorization.api.AuthorizationErrorResponse.Validation;
 import io.github.monssifechadli99.transactiq.authorization.api.AuthorizationErrorResponse.ValidationFieldError;
+import io.github.monssifechadli99.transactiq.authorization.application.model.PreAuthorizationRejectionException;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
@@ -37,6 +38,17 @@ public class AuthorizationExceptionHandler {
     ResponseEntity<AuthorizationErrorResponse> handleMalformedRequest() {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(new CodeOnly(ErrorCode.MALFORMED_AUTHORIZATION_REQUEST));
+    }
+
+    @ExceptionHandler(PreAuthorizationRejectionException.class)
+    ResponseEntity<AuthorizationErrorResponse> handlePreAuthorizationRejection(
+            PreAuthorizationRejectionException exception) {
+        ErrorCode errorCode = switch (exception.reason()) {
+            case UNKNOWN_CARD_TOKEN -> ErrorCode.UNKNOWN_CARD_TOKEN;
+            case UNSUPPORTED_CURRENCY -> ErrorCode.UNSUPPORTED_CURRENCY;
+        };
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(new CodeOnly(errorCode));
     }
 
     @ExceptionHandler(Exception.class)

@@ -3,32 +3,43 @@ package io.github.monssifechadli99.transactiq.authorization;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
+import io.github.monssifechadli99.transactiq.authorization.adapter.out.memory.DeterministicFraudAssessmentAdapter;
+import io.github.monssifechadli99.transactiq.authorization.adapter.out.memory.DeterministicNonFraudCheckAdapter;
 import io.github.monssifechadli99.transactiq.authorization.adapter.out.memory.InMemoryAuthorizationLedgerAdapter;
 import io.github.monssifechadli99.transactiq.authorization.adapter.out.memory.InMemoryAuthorizationLedgerAdapter.LedgerEntry;
 import io.github.monssifechadli99.transactiq.authorization.application.model.AuthorizationChannel;
+import io.github.monssifechadli99.transactiq.authorization.application.model.AuthorizationProcessingResult;
+import io.github.monssifechadli99.transactiq.authorization.application.model.IdempotencyClaimResult;
 import io.github.monssifechadli99.transactiq.authorization.application.port.in.AuthorizationCommand;
-import io.github.monssifechadli99.transactiq.authorization.application.port.in.AuthorizeTransactionUseCase;
+import io.github.monssifechadli99.transactiq.authorization.application.port.out.IdempotencyClaimPort;
+import io.github.monssifechadli99.transactiq.authorization.application.port.out.TransactionExecutorPort;
+import io.github.monssifechadli99.transactiq.authorization.application.service.AuthorizationApplicationService;
+import io.github.monssifechadli99.transactiq.authorization.application.service.AuthorizationCompletionService;
 import io.github.monssifechadli99.transactiq.authorization.domain.AuthorizationOutcome;
+import io.github.monssifechadli99.transactiq.authorization.domain.AuthorizationPolicy;
 import io.github.monssifechadli99.transactiq.authorization.domain.DeclineReason;
+import io.github.monssifechadli99.transactiq.authorization.domain.FraudAssessment;
+import io.github.monssifechadli99.transactiq.authorization.domain.NonFraudCheckResult;
 import java.math.BigDecimal;
 import java.time.Instant;
-import java.util.List;
 import java.util.UUID;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 
-@SpringBootTest
 class AuthorizationInMemoryIntegrationTest {
 
-    @Autowired
-    private AuthorizeTransactionUseCase authorizeTransactionUseCase;
-
-    @Autowired
-    private InMemoryAuthorizationLedgerAdapter ledgerAdapter;
-
     @Test
-    void orchestratesReviewOutcomeWithRealInMemoryAdapters() {
+    void orchestratesReviewOutcomeWithFocusedInMemoryAdapters() {
+        InMemoryAuthorizationLedgerAdapter ledger = new InMemoryAuthorizationLedgerAdapter();
+        AuthorizationCompletionService completionService = new AuthorizationCompletionService(
+                new SameThreadTransactionExecutor(),
+                new DeterministicNonFraudCheckAdapter(),
+                ledger,
+                new AuthorizationPolicy());
+        AuthorizationApplicationService service = new AuthorizationApplicationService(
+                new AlwaysClaimedIdempotencyPort(),
+                new DeterministicFraudAssessmentAdapter(),
+                completionService);
         AuthorizationCommand command = new AuthorizationCommand(
                 UUID.fromString("14f9943b-da16-41e2-8f28-bd491a109e49"),
                 "tok_A1B2C3D4",
@@ -39,21 +50,41 @@ class AuthorizationInMemoryIntegrationTest {
                 "DE",
                 AuthorizationChannel.ECOMMERCE,
                 Instant.parse("2026-07-19T10:15:30Z"));
-        long entriesBefore = entriesFor(command.requestId()).size();
 
-        AuthorizationOutcome outcome = authorizeTransactionUseCase.authorize(command);
+        AuthorizationProcessingResult.Completed result = assertInstanceOf(
+                AuthorizationProcessingResult.Completed.class,
+                service.authorize(command));
 
-        AuthorizationOutcome.Declined declined =
-                assertInstanceOf(AuthorizationOutcome.Declined.class, outcome);
+        AuthorizationOutcome.Declined declined = assertInstanceOf(
+                AuthorizationOutcome.Declined.class, result.outcome());
         assertEquals(DeclineReason.FRAUD_REVIEW_REQUIRED, declined.declineReason());
-        List<LedgerEntry> matchingEntries = entriesFor(command.requestId());
-        assertEquals(entriesBefore + 1, matchingEntries.size());
-        assertEquals(new LedgerEntry(command, outcome), matchingEntries.getLast());
+        assertEquals(
+                new LedgerEntry(
+                        command,
+                        FraudAssessment.REVIEW,
+                        NonFraudCheckResult.PASSED,
+                        result.outcome()),
+                ledger.snapshot().getFirst());
     }
 
-    private List<LedgerEntry> entriesFor(UUID requestId) {
-        return ledgerAdapter.snapshot().stream()
-                .filter(entry -> entry.command().requestId().equals(requestId))
-                .toList();
+    private static final class AlwaysClaimedIdempotencyPort implements IdempotencyClaimPort {
+
+        @Override
+        public IdempotencyClaimResult claim(AuthorizationCommand command) {
+            return new IdempotencyClaimResult.Claimed();
+        }
+
+        @Override
+        public boolean releasePending(UUID requestId) {
+            return true;
+        }
+    }
+
+    private static final class SameThreadTransactionExecutor implements TransactionExecutorPort {
+
+        @Override
+        public <T> T execute(Supplier<T> operation) {
+            return operation.get();
+        }
     }
 }

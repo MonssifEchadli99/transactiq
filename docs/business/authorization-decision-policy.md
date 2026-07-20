@@ -12,6 +12,16 @@ Fraud assessment and authorization decision are separate concepts. A fraud asses
 
 The fraud engine produces the fraud assessment, risk score, and evidence from triggered rules.
 
+## Pre-authorization rejections
+
+An unsupported request currency is rejected before card-token lookup. For EUR requests, an unknown
+synthetic card token is rejected after lookup. These conditions return `UNSUPPORTED_CURRENCY` or
+`UNKNOWN_CARD_TOKEN`; they are rejected before the authorization policy runs, are not
+`AuthorizationDecision` values, and do not create a ledger entry.
+
+The live workflow has already claimed the request and run fraud assessment before atomic
+completion reaches these checks. A rejection releases the claim while it remains `PENDING`.
+
 ## Authorization decisions
 
 - `APPROVED`
@@ -32,6 +42,11 @@ When a non-fraud failure coexists with `REVIEW` or `HIGH_RISK`, the non-fraud fa
 ## Ledger responsibility
 
 The ledger records the request, fraud assessment, final decision, reason, timestamps, and associated case identifier when applicable. It records the outcome but does not make the decision.
+
+The live persistent completion component also records the exact non-fraud check result. An
+approved outcome creates one active reservation and increases the account's reserved amount by the
+authorization amount. A declined outcome creates no reservation and does not change the balance.
+All completion writes occur in one transaction for an existing pending request.
 
 ## Examples
 

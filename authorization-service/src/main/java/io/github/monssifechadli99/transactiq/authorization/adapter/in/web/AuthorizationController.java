@@ -1,11 +1,13 @@
 package io.github.monssifechadli99.transactiq.authorization.adapter.in.web;
 
+import io.github.monssifechadli99.transactiq.authorization.api.AuthorizationErrorResponse.CodeOnly;
+import io.github.monssifechadli99.transactiq.authorization.api.AuthorizationErrorResponse.ErrorCode;
 import io.github.monssifechadli99.transactiq.authorization.api.AuthorizationRequest;
-import io.github.monssifechadli99.transactiq.authorization.api.AuthorizationResponse;
+import io.github.monssifechadli99.transactiq.authorization.application.model.AuthorizationProcessingResult;
 import io.github.monssifechadli99.transactiq.authorization.application.port.in.AuthorizationCommand;
 import io.github.monssifechadli99.transactiq.authorization.application.port.in.AuthorizeTransactionUseCase;
-import io.github.monssifechadli99.transactiq.authorization.domain.AuthorizationOutcome;
 import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -30,11 +32,20 @@ public class AuthorizationController {
     @PostMapping(
             consumes = MediaType.APPLICATION_JSON_VALUE,
             produces = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<AuthorizationResponse> authorize(
+    public ResponseEntity<?> authorize(
             @Valid @RequestBody AuthorizationRequest request) {
         AuthorizationCommand command = mapper.toCommand(request);
-        AuthorizationOutcome outcome = authorizeTransactionUseCase.authorize(command);
+        AuthorizationProcessingResult result = authorizeTransactionUseCase.authorize(command);
 
-        return ResponseEntity.ok(mapper.toResponse(command, outcome));
+        return switch (result) {
+            case AuthorizationProcessingResult.Completed completed ->
+                    ResponseEntity.ok(mapper.toResponse(command, completed.outcome()));
+            case AuthorizationProcessingResult.Pending pending ->
+                    ResponseEntity.status(HttpStatus.ACCEPTED)
+                            .body(mapper.toPendingResponse(pending.requestId()));
+            case AuthorizationProcessingResult.Conflict conflict ->
+                    ResponseEntity.status(HttpStatus.CONFLICT)
+                            .body(new CodeOnly(ErrorCode.REQUEST_ID_CONFLICT));
+        };
     }
 }

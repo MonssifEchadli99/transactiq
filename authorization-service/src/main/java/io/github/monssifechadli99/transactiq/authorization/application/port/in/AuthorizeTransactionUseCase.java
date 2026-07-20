@@ -1,8 +1,8 @@
 package io.github.monssifechadli99.transactiq.authorization.application.port.in;
 
-import io.github.monssifechadli99.transactiq.authorization.domain.AuthorizationOutcome;
+import io.github.monssifechadli99.transactiq.authorization.application.model.AuthorizationProcessingResult;
 
 public interface AuthorizeTransactionUseCase {
 
-    AuthorizationOutcome authorize(AuthorizationCommand command);
+    AuthorizationProcessingResult authorize(AuthorizationCommand command);
 }

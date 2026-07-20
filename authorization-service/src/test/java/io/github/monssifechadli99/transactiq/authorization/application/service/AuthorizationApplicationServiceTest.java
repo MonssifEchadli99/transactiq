@@ -7,11 +7,15 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.monssifechadli99.transactiq.authorization.application.model.AuthorizationChannel;
+import io.github.monssifechadli99.transactiq.authorization.application.model.AuthorizationProcessingResult;
+import io.github.monssifechadli99.transactiq.authorization.application.model.IdempotencyClaimResult;
+import io.github.monssifechadli99.transactiq.authorization.application.model.PreAuthorizationRejectionException;
 import io.github.monssifechadli99.transactiq.authorization.application.port.in.AuthorizationCommand;
 import io.github.monssifechadli99.transactiq.authorization.application.port.out.AuthorizationLedgerPort;
 import io.github.monssifechadli99.transactiq.authorization.application.port.out.FraudAssessmentPort;
+import io.github.monssifechadli99.transactiq.authorization.application.port.out.IdempotencyClaimPort;
 import io.github.monssifechadli99.transactiq.authorization.application.port.out.NonFraudCheckPort;
-import io.github.monssifechadli99.transactiq.authorization.domain.AuthorizationDecision;
+import io.github.monssifechadli99.transactiq.authorization.application.port.out.TransactionExecutorPort;
 import io.github.monssifechadli99.transactiq.authorization.domain.AuthorizationOutcome;
 import io.github.monssifechadli99.transactiq.authorization.domain.AuthorizationPolicy;
 import io.github.monssifechadli99.transactiq.authorization.domain.DeclineReason;
@@ -22,6 +26,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
 
 class AuthorizationApplicationServiceTest {
@@ -38,111 +43,210 @@ class AuthorizationApplicationServiceTest {
             Instant.parse("2026-07-19T10:15:30Z"));
 
     @Test
-    void clearAndPassedIsApprovedAndRecordedOnce() {
-        TestFixture fixture = fixture(FraudAssessment.CLEAR, NonFraudCheckResult.PASSED);
+    void claimedRequestRunsFraudAndAtomicCompletion() {
+        TestFixture fixture = fixture(
+                new IdempotencyClaimResult.Claimed(),
+                FraudAssessment.CLEAR,
+                NonFraudCheckResult.PASSED);
 
-        AuthorizationOutcome outcome = fixture.service().authorize(COMMAND);
+        AuthorizationProcessingResult.Completed result = assertInstanceOf(
+                AuthorizationProcessingResult.Completed.class,
+                fixture.service().authorize(COMMAND));
 
-        assertInstanceOf(AuthorizationOutcome.Approved.class, outcome);
-        assertEquals(AuthorizationDecision.APPROVED, outcome.decision());
-        assertRecordedOnce(fixture.ledger(), outcome);
+        assertInstanceOf(AuthorizationOutcome.Approved.class, result.outcome());
+        assertEquals(1, fixture.idempotency().claimCount());
+        assertEquals(0, fixture.idempotency().releaseCount());
+        assertEquals(1, fixture.fraud().invocationCount());
+        assertEquals(1, fixture.nonFraud().invocationCount());
+        assertEquals(1, fixture.transactionExecutor().invocationCount());
+        assertEquals(1, fixture.ledger().records().size());
     }
 
     @Test
-    void reviewAndPassedIsDeclinedAndRecordedOnce() {
-        TestFixture fixture = fixture(FraudAssessment.REVIEW, NonFraudCheckResult.PASSED);
+    void completedClaimReturnsStoredOutcomeWithoutRunningWorkflow() {
+        AuthorizationOutcome stored = new AuthorizationOutcome.Declined(
+                DeclineReason.FRAUD_REVIEW_REQUIRED, true);
+        TestFixture fixture = fixture(
+                new IdempotencyClaimResult.Completed(stored),
+                FraudAssessment.CLEAR,
+                NonFraudCheckResult.PASSED);
 
-        AuthorizationOutcome outcome = fixture.service().authorize(COMMAND);
+        AuthorizationProcessingResult.Completed result = assertInstanceOf(
+                AuthorizationProcessingResult.Completed.class,
+                fixture.service().authorize(COMMAND));
 
-        AuthorizationOutcome.Declined declined =
-                assertInstanceOf(AuthorizationOutcome.Declined.class, outcome);
-        assertEquals(AuthorizationDecision.DECLINED, declined.decision());
-        assertEquals(DeclineReason.FRAUD_REVIEW_REQUIRED, declined.declineReason());
-        assertRecordedOnce(fixture.ledger(), outcome);
+        assertSame(stored, result.outcome());
+        assertWorkflowNotRun(fixture);
     }
 
     @Test
-    void highRiskAndInsufficientFundsPreservesPrimaryReasonAndRecordsOnce() {
-        TestFixture fixture =
-                fixture(FraudAssessment.HIGH_RISK, NonFraudCheckResult.INSUFFICIENT_FUNDS);
+    void pendingClaimReturnsExpectedWorkflowStateWithoutRunningWorkflow() {
+        TestFixture fixture = fixture(
+                new IdempotencyClaimResult.Pending(),
+                FraudAssessment.CLEAR,
+                NonFraudCheckResult.PASSED);
 
-        AuthorizationOutcome outcome = fixture.service().authorize(COMMAND);
+        AuthorizationProcessingResult.Pending result = assertInstanceOf(
+                AuthorizationProcessingResult.Pending.class,
+                fixture.service().authorize(COMMAND));
 
-        AuthorizationOutcome.Declined declined =
-                assertInstanceOf(AuthorizationOutcome.Declined.class, outcome);
-        assertEquals(DeclineReason.INSUFFICIENT_FUNDS, declined.declineReason());
-        assertTrue(declined.fraudCaseRequired());
-        assertRecordedOnce(fixture.ledger(), outcome);
+        assertEquals(COMMAND.requestId(), result.requestId());
+        assertWorkflowNotRun(fixture);
     }
 
     @Test
-    void invokesBothAssessmentPortsForNormalRequest() {
-        TestFixture fixture = fixture(FraudAssessment.CLEAR, NonFraudCheckResult.PASSED);
+    void conflictingClaimReturnsExpectedWorkflowStateWithoutRunningWorkflow() {
+        TestFixture fixture = fixture(
+                new IdempotencyClaimResult.Conflict(),
+                FraudAssessment.CLEAR,
+                NonFraudCheckResult.PASSED);
 
-        fixture.service().authorize(COMMAND);
+        AuthorizationProcessingResult.Conflict result = assertInstanceOf(
+                AuthorizationProcessingResult.Conflict.class,
+                fixture.service().authorize(COMMAND));
 
-        assertEquals(1, fixture.fraudAssessmentPort().invocationCount());
-        assertSame(COMMAND, fixture.fraudAssessmentPort().lastCommand());
-        assertEquals(1, fixture.nonFraudCheckPort().invocationCount());
-        assertSame(COMMAND, fixture.nonFraudCheckPort().lastCommand());
+        assertEquals(COMMAND.requestId(), result.requestId());
+        assertWorkflowNotRun(fixture);
     }
 
     @Test
-    void fraudAssessmentFailurePropagatesAndRecordsNothing() {
-        TestFixture fixture = fixture(FraudAssessment.CLEAR, NonFraudCheckResult.PASSED);
-        IllegalStateException failure = new IllegalStateException("fraud assessment unavailable");
-        fixture.fraudAssessmentPort().failWith(failure);
+    void preAuthorizationRejectionReleasesPendingClaimAndPropagatesOriginalFailure() {
+        TestFixture fixture = fixture(
+                new IdempotencyClaimResult.Claimed(),
+                FraudAssessment.CLEAR,
+                NonFraudCheckResult.PASSED);
+        PreAuthorizationRejectionException failure = new PreAuthorizationRejectionException(
+                PreAuthorizationRejectionException.Reason.UNKNOWN_CARD_TOKEN);
+        fixture.nonFraud().failWith(failure);
 
-        IllegalStateException thrown =
-                assertThrows(IllegalStateException.class, () -> fixture.service().authorize(COMMAND));
+        PreAuthorizationRejectionException thrown = assertThrows(
+                PreAuthorizationRejectionException.class,
+                () -> fixture.service().authorize(COMMAND));
 
         assertSame(failure, thrown);
+        assertEquals(1, fixture.fraud().invocationCount());
+        assertEquals(1, fixture.nonFraud().invocationCount());
+        assertEquals(1, fixture.idempotency().releaseCount());
+        assertEquals(COMMAND.requestId(), fixture.idempotency().releasedRequestIds().getFirst());
         assertTrue(fixture.ledger().records().isEmpty());
     }
 
     @Test
-    void nonFraudCheckFailurePropagatesAndRecordsNothing() {
-        TestFixture fixture = fixture(FraudAssessment.CLEAR, NonFraudCheckResult.PASSED);
-        IllegalStateException failure = new IllegalStateException("non-fraud check unavailable");
-        fixture.nonFraudCheckPort().failWith(failure);
+    void technicalFraudFailureReleasesPendingClaimAndPropagatesOriginalFailure() {
+        TestFixture fixture = fixture(
+                new IdempotencyClaimResult.Claimed(),
+                FraudAssessment.CLEAR,
+                NonFraudCheckResult.PASSED);
+        IllegalStateException failure = new IllegalStateException("fraud unavailable");
+        fixture.fraud().failWith(failure);
 
-        IllegalStateException thrown =
-                assertThrows(IllegalStateException.class, () -> fixture.service().authorize(COMMAND));
+        IllegalStateException thrown = assertThrows(
+                IllegalStateException.class,
+                () -> fixture.service().authorize(COMMAND));
 
         assertSame(failure, thrown);
+        assertEquals(1, fixture.idempotency().releaseCount());
+        assertEquals(0, fixture.nonFraud().invocationCount());
+        assertEquals(0, fixture.transactionExecutor().invocationCount());
         assertTrue(fixture.ledger().records().isEmpty());
+    }
+
+    @Test
+    void releaseFailureIsSuppressedOnOriginalProcessingFailure() {
+        TestFixture fixture = fixture(
+                new IdempotencyClaimResult.Claimed(),
+                FraudAssessment.CLEAR,
+                NonFraudCheckResult.PASSED);
+        IllegalStateException processingFailure = new IllegalStateException("fraud unavailable");
+        IllegalStateException releaseFailure = new IllegalStateException("release unavailable");
+        fixture.fraud().failWith(processingFailure);
+        fixture.idempotency().failReleaseWith(releaseFailure);
+
+        IllegalStateException thrown = assertThrows(
+                IllegalStateException.class,
+                () -> fixture.service().authorize(COMMAND));
+
+        assertSame(processingFailure, thrown);
+        assertEquals(List.of(releaseFailure), List.of(thrown.getSuppressed()));
     }
 
     private static TestFixture fixture(
+            IdempotencyClaimResult claimResult,
             FraudAssessment fraudAssessment,
             NonFraudCheckResult nonFraudCheckResult) {
-        FakeFraudAssessmentPort fraudAssessmentPort =
-                new FakeFraudAssessmentPort(fraudAssessment);
-        FakeNonFraudCheckPort nonFraudCheckPort =
-                new FakeNonFraudCheckPort(nonFraudCheckResult);
+        FakeIdempotencyClaimPort idempotency = new FakeIdempotencyClaimPort(claimResult);
+        FakeFraudAssessmentPort fraud = new FakeFraudAssessmentPort(fraudAssessment);
+        FakeNonFraudCheckPort nonFraud = new FakeNonFraudCheckPort(nonFraudCheckResult);
         RecordingAuthorizationLedger ledger = new RecordingAuthorizationLedger();
-        AuthorizationApplicationService service = new AuthorizationApplicationService(
-                fraudAssessmentPort,
-                nonFraudCheckPort,
+        SameThreadTransactionExecutor transactionExecutor = new SameThreadTransactionExecutor();
+        AuthorizationCompletionService completionService = new AuthorizationCompletionService(
+                transactionExecutor,
+                nonFraud,
                 ledger,
                 new AuthorizationPolicy());
-        return new TestFixture(service, fraudAssessmentPort, nonFraudCheckPort, ledger);
+        AuthorizationApplicationService service = new AuthorizationApplicationService(
+                idempotency, fraud, completionService);
+        return new TestFixture(
+                service, idempotency, fraud, nonFraud, ledger, transactionExecutor);
     }
 
-    private static void assertRecordedOnce(
-            RecordingAuthorizationLedger ledger,
-            AuthorizationOutcome outcome) {
-        assertEquals(1, ledger.records().size());
-        RecordedAuthorization recorded = ledger.records().getFirst();
-        assertSame(COMMAND, recorded.command());
-        assertSame(outcome, recorded.outcome());
+    private static void assertWorkflowNotRun(TestFixture fixture) {
+        assertEquals(0, fixture.fraud().invocationCount());
+        assertEquals(0, fixture.nonFraud().invocationCount());
+        assertEquals(0, fixture.transactionExecutor().invocationCount());
+        assertTrue(fixture.ledger().records().isEmpty());
+        assertEquals(0, fixture.idempotency().releaseCount());
     }
 
     private record TestFixture(
             AuthorizationApplicationService service,
-            FakeFraudAssessmentPort fraudAssessmentPort,
-            FakeNonFraudCheckPort nonFraudCheckPort,
-            RecordingAuthorizationLedger ledger) {
+            FakeIdempotencyClaimPort idempotency,
+            FakeFraudAssessmentPort fraud,
+            FakeNonFraudCheckPort nonFraud,
+            RecordingAuthorizationLedger ledger,
+            SameThreadTransactionExecutor transactionExecutor) {}
+
+    private static final class FakeIdempotencyClaimPort implements IdempotencyClaimPort {
+
+        private final IdempotencyClaimResult claimResult;
+        private final List<UUID> releasedRequestIds = new ArrayList<>();
+        private RuntimeException releaseFailure;
+        private int claimCount;
+
+        private FakeIdempotencyClaimPort(IdempotencyClaimResult claimResult) {
+            this.claimResult = claimResult;
+        }
+
+        @Override
+        public IdempotencyClaimResult claim(AuthorizationCommand command) {
+            claimCount++;
+            return claimResult;
+        }
+
+        @Override
+        public boolean releasePending(UUID requestId) {
+            releasedRequestIds.add(requestId);
+            if (releaseFailure != null) {
+                throw releaseFailure;
+            }
+            return true;
+        }
+
+        private void failReleaseWith(RuntimeException failure) {
+            releaseFailure = failure;
+        }
+
+        private int claimCount() {
+            return claimCount;
+        }
+
+        private int releaseCount() {
+            return releasedRequestIds.size();
+        }
+
+        private List<UUID> releasedRequestIds() {
+            return List.copyOf(releasedRequestIds);
+        }
     }
 
     private static final class FakeFraudAssessmentPort implements FraudAssessmentPort {
@@ -150,7 +254,6 @@ class AuthorizationApplicationServiceTest {
         private final FraudAssessment result;
         private RuntimeException failure;
         private int invocationCount;
-        private AuthorizationCommand lastCommand;
 
         private FakeFraudAssessmentPort(FraudAssessment result) {
             this.result = result;
@@ -159,7 +262,6 @@ class AuthorizationApplicationServiceTest {
         @Override
         public FraudAssessment assess(AuthorizationCommand command) {
             invocationCount++;
-            lastCommand = command;
             if (failure != null) {
                 throw failure;
             }
@@ -172,10 +274,6 @@ class AuthorizationApplicationServiceTest {
 
         private int invocationCount() {
             return invocationCount;
-        }
-
-        private AuthorizationCommand lastCommand() {
-            return lastCommand;
         }
     }
 
@@ -184,7 +282,6 @@ class AuthorizationApplicationServiceTest {
         private final NonFraudCheckResult result;
         private RuntimeException failure;
         private int invocationCount;
-        private AuthorizationCommand lastCommand;
 
         private FakeNonFraudCheckPort(NonFraudCheckResult result) {
             this.result = result;
@@ -193,7 +290,6 @@ class AuthorizationApplicationServiceTest {
         @Override
         public NonFraudCheckResult check(AuthorizationCommand command) {
             invocationCount++;
-            lastCommand = command;
             if (failure != null) {
                 throw failure;
             }
@@ -207,28 +303,38 @@ class AuthorizationApplicationServiceTest {
         private int invocationCount() {
             return invocationCount;
         }
-
-        private AuthorizationCommand lastCommand() {
-            return lastCommand;
-        }
     }
 
     private static final class RecordingAuthorizationLedger implements AuthorizationLedgerPort {
 
-        private final List<RecordedAuthorization> records = new ArrayList<>();
+        private final List<AuthorizationOutcome> records = new ArrayList<>();
 
         @Override
-        public void record(AuthorizationCommand command, AuthorizationOutcome outcome) {
-            records.add(new RecordedAuthorization(command, outcome));
+        public void record(
+                AuthorizationCommand command,
+                FraudAssessment fraudAssessment,
+                NonFraudCheckResult nonFraudCheckResult,
+                AuthorizationOutcome outcome) {
+            records.add(outcome);
         }
 
-        private List<RecordedAuthorization> records() {
-            return records;
+        private List<AuthorizationOutcome> records() {
+            return List.copyOf(records);
         }
     }
 
-    private record RecordedAuthorization(
-            AuthorizationCommand command,
-            AuthorizationOutcome outcome) {
+    private static final class SameThreadTransactionExecutor implements TransactionExecutorPort {
+
+        private int invocationCount;
+
+        @Override
+        public <T> T execute(Supplier<T> operation) {
+            invocationCount++;
+            return operation.get();
+        }
+
+        private int invocationCount() {
+            return invocationCount;
+        }
     }
 }

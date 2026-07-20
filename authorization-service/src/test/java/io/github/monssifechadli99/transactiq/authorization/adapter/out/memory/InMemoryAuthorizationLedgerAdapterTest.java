@@ -9,6 +9,8 @@ import io.github.monssifechadli99.transactiq.authorization.application.model.Aut
 import io.github.monssifechadli99.transactiq.authorization.application.port.in.AuthorizationCommand;
 import io.github.monssifechadli99.transactiq.authorization.domain.AuthorizationOutcome;
 import io.github.monssifechadli99.transactiq.authorization.domain.DeclineReason;
+import io.github.monssifechadli99.transactiq.authorization.domain.FraudAssessment;
+import io.github.monssifechadli99.transactiq.authorization.domain.NonFraudCheckResult;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
@@ -30,20 +32,40 @@ class InMemoryAuthorizationLedgerAdapterTest {
         AuthorizationOutcome declined =
                 new AuthorizationOutcome.Declined(DeclineReason.HIGH_FRAUD_RISK, true);
 
-        adapter.record(approvedCommand, approved);
-        adapter.record(declinedCommand, declined);
+        adapter.record(
+                approvedCommand,
+                FraudAssessment.CLEAR,
+                NonFraudCheckResult.PASSED,
+                approved);
+        adapter.record(
+                declinedCommand,
+                FraudAssessment.HIGH_RISK,
+                NonFraudCheckResult.PASSED,
+                declined);
 
         List<LedgerEntry> snapshot = adapter.snapshot();
         assertEquals(
                 List.of(
-                        new LedgerEntry(approvedCommand, approved),
-                        new LedgerEntry(declinedCommand, declined)),
+                        new LedgerEntry(
+                                approvedCommand,
+                                FraudAssessment.CLEAR,
+                                NonFraudCheckResult.PASSED,
+                                approved),
+                        new LedgerEntry(
+                                declinedCommand,
+                                FraudAssessment.HIGH_RISK,
+                                NonFraudCheckResult.PASSED,
+                                declined)),
                 snapshot);
         assertInstanceOf(AuthorizationOutcome.Approved.class, snapshot.get(0).outcome());
         assertInstanceOf(AuthorizationOutcome.Declined.class, snapshot.get(1).outcome());
         assertThrows(
                 UnsupportedOperationException.class,
-                () -> snapshot.add(new LedgerEntry(approvedCommand, approved)));
+                () -> snapshot.add(new LedgerEntry(
+                        approvedCommand,
+                        FraudAssessment.CLEAR,
+                        NonFraudCheckResult.PASSED,
+                        approved)));
     }
 
     @Test
@@ -52,8 +74,16 @@ class InMemoryAuthorizationLedgerAdapterTest {
         AuthorizationCommand command = command(requestId);
         AuthorizationOutcome outcome = new AuthorizationOutcome.Approved();
 
-        adapter.record(command, outcome);
-        adapter.record(command, outcome);
+        adapter.record(
+                command,
+                FraudAssessment.CLEAR,
+                NonFraudCheckResult.PASSED,
+                outcome);
+        adapter.record(
+                command,
+                FraudAssessment.CLEAR,
+                NonFraudCheckResult.PASSED,
+                outcome);
 
         List<LedgerEntry> snapshot = adapter.snapshot();
         assertEquals(2, snapshot.size());

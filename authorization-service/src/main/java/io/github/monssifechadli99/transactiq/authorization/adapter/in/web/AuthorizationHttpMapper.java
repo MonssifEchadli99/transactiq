@@ -2,8 +2,10 @@ package io.github.monssifechadli99.transactiq.authorization.adapter.in.web;
 
 import io.github.monssifechadli99.transactiq.authorization.api.AuthorizationRequest;
 import io.github.monssifechadli99.transactiq.authorization.api.AuthorizationResponse;
+import io.github.monssifechadli99.transactiq.authorization.api.AuthorizationResponse.Status;
 import io.github.monssifechadli99.transactiq.authorization.application.port.in.AuthorizationCommand;
 import io.github.monssifechadli99.transactiq.authorization.domain.AuthorizationOutcome;
+import java.util.UUID;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -34,5 +36,9 @@ public final class AuthorizationHttpMapper {
                     declined.decision(),
                     declined.declineReason());
         };
+    }
+
+    public AuthorizationResponse.Pending toPendingResponse(UUID requestId) {
+        return new AuthorizationResponse.Pending(requestId, Status.PENDING);
     }
 }

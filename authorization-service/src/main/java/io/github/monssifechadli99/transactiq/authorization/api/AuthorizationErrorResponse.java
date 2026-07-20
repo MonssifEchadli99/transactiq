@@ -10,6 +10,9 @@ public sealed interface AuthorizationErrorResponse
     enum ErrorCode {
         INVALID_AUTHORIZATION_REQUEST,
         MALFORMED_AUTHORIZATION_REQUEST,
+        UNKNOWN_CARD_TOKEN,
+        UNSUPPORTED_CURRENCY,
+        REQUEST_ID_CONFLICT,
         AUTHORIZATION_PROCESSING_ERROR
     }
 

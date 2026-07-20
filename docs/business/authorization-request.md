@@ -27,12 +27,29 @@ contains `declineReason`, with one of `INSUFFICIENT_FUNDS`, `FRAUD_REVIEW_REQUIR
 `HIGH_FRAUD_RISK`. The successful response does not expose assessment details, scores, evidence,
 case data, or ledger data.
 
+An identical retry while the original request is still processing returns `202 Accepted` with
+`requestId` and `status: PENDING`. Reusing a request identifier with different canonical request
+data returns `409 Conflict` with code `REQUEST_ID_CONFLICT`. These expected idempotency states are
+returned explicitly rather than represented by exceptions.
+
 Validation failures return `400 Bad Request` with code `INVALID_AUTHORIZATION_REQUEST` and all
 field errors sorted by field and message. Malformed JSON or typed representations return `400 Bad
-Request` with code `MALFORMED_AUTHORIZATION_REQUEST`. Unexpected technical failures return `500
-Internal Server Error` with code `AUTHORIZATION_PROCESSING_ERROR`; they are not business decision
-values. Malformed and technical responses omit field errors and never expose internal exception or
-request details.
+Request` with code `MALFORMED_AUTHORIZATION_REQUEST`.
+
+After request validation, the platform first claims `requestId`. For a newly claimed request, fraud
+assessment runs before atomic completion. Completion first checks the request currency because
+Cycle 3 supports EUR only. A non-EUR request returns `400 Bad Request` with code
+`UNSUPPORTED_CURRENCY`, without looking up the card token. For a EUR request, the platform locks and
+looks up the synthetic card account by `cardToken`; an unknown token returns `400 Bad Request` with
+code `UNKNOWN_CARD_TOKEN`. A mismatch between the EUR request and account currency also returns
+`400 Bad Request` with code `UNSUPPORTED_CURRENCY`. These pre-authorization rejections contain only
+the code, are not authorization decisions, create no ledger entry, and release the claim while it
+is still `PENDING`.
+
+Unexpected technical failures return `500 Internal Server Error` with code
+`AUTHORIZATION_PROCESSING_ERROR`; they are not business decision values. Malformed and technical
+responses omit field errors and never expose internal exception or request details. A technical
+failure after a successful first claim releases that claim only while it remains `PENDING`.
 
 ## Trusted internal information
 
@@ -76,14 +93,22 @@ through the `ECOMMERCE` channel. The merchant simulator also supplies the transa
 platform obtains trusted internal information and generates the fraud and authorization results
 separately.
 
-## Demo-only deterministic fixtures
+## Demo-only synthetic fixtures
 
-The in-memory adapters recognize these synthetic identifiers for local demonstrations and tests:
+The in-memory fraud adapter recognizes these synthetic identifiers for local demonstrations and
+tests:
 
 - `merchant-review` produces `REVIEW`.
 - `merchant-high-risk` produces `HIGH_RISK`.
 - Any other valid merchant identifier produces `CLEAR`.
-- `tok_insufficient01` produces `INSUFFICIENT_FUNDS`.
-- Any other valid card token produces `PASSED`.
+
+The Cycle 3 PostgreSQL seed contains these synthetic EUR card accounts:
+
+- `tok_A1B2C3D4` has a posted balance of EUR 1,000.00 and no reserved amount.
+- `tok_insufficient01` has a posted balance of EUR 0.00 and no reserved amount.
+
+The available balance is `posted_balance - reserved_amount`. An amount less than or equal to the
+available balance produces `PASSED`; a larger amount produces `INSUFFICIENT_FUNDS`. Other valid
+card tokens are rejected as `UNKNOWN_CARD_TOKEN` unless a synthetic account is added explicitly.
 
 These identifiers are demo-only fixtures, not production data, configuration, or fraud rules.

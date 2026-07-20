@@ -5,11 +5,11 @@ import io.github.monssifechadli99.transactiq.authorization.domain.DeclineReason;
 import java.util.UUID;
 
 public sealed interface AuthorizationResponse
-        permits AuthorizationResponse.Approved, AuthorizationResponse.Declined {
+        permits AuthorizationResponse.Approved,
+                AuthorizationResponse.Declined,
+                AuthorizationResponse.Pending {
 
     UUID requestId();
-
-    AuthorizationDecision decision();
 
     record Approved(
             UUID requestId,
@@ -20,5 +20,14 @@ public sealed interface AuthorizationResponse
             UUID requestId,
             AuthorizationDecision decision,
             DeclineReason declineReason) implements AuthorizationResponse {
+    }
+
+    record Pending(
+            UUID requestId,
+            Status status) implements AuthorizationResponse {
+    }
+
+    enum Status {
+        PENDING
     }
 }

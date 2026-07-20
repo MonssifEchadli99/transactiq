@@ -1,0 +1,7 @@
+spring:
+  datasource:
+    url: "${AUTHORIZATION_DB_URL:jdbc:postgresql://localhost:${TRANSACTIQ_POSTGRES_PORT:5433}/transactiq_authorization}"
+    username: "${AUTHORIZATION_DB_USERNAME:transactiq_local}"
+    password: "${AUTHORIZATION_DB_PASSWORD:transactiq_local}"
+  liquibase:
+    change-log: "classpath:db/changelog/db.changelog-master.xml"

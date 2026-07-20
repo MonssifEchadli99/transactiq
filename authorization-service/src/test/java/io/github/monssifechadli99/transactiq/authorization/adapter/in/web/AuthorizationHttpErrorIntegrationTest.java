@@ -3,23 +3,32 @@ package io.github.monssifechadli99.transactiq.authorization.adapter.in.web;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.github.monssifechadli99.transactiq.authorization.adapter.out.memory.InMemoryAuthorizationLedgerAdapter;
+import io.github.monssifechadli99.transactiq.authorization.support.AuthorizationServiceIntegrationTest;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.List;
+import java.util.UUID;
 import java.util.stream.Stream;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.jdbc.core.simple.JdbcClient;
 
-@SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
+@AuthorizationServiceIntegrationTest(webEnvironment = WebEnvironment.RANDOM_PORT)
 class AuthorizationHttpErrorIntegrationTest {
+
+    private static final UUID UNKNOWN_EUR_REQUEST_ID =
+            UUID.fromString("10000000-0000-4000-8000-000000000001");
+    private static final UUID KNOWN_NON_EUR_REQUEST_ID =
+            UUID.fromString("10000000-0000-4000-8000-000000000002");
+    private static final UUID UNKNOWN_NON_EUR_REQUEST_ID =
+            UUID.fromString("10000000-0000-4000-8000-000000000003");
 
     private final HttpClient httpClient = HttpClient.newHttpClient();
 
@@ -27,11 +36,27 @@ class AuthorizationHttpErrorIntegrationTest {
     private int port;
 
     @Autowired
-    private InMemoryAuthorizationLedgerAdapter ledgerAdapter;
+    private JdbcClient jdbcClient;
+
+    @AfterEach
+    void removeRejectedRequestTestData() {
+        jdbcClient.sql(
+                        """
+                        DELETE FROM "authorization".authorization_requests
+                        WHERE request_id IN (:requestIds)
+                        """)
+                .param(
+                        "requestIds",
+                        List.of(
+                                UNKNOWN_EUR_REQUEST_ID,
+                                KNOWN_NON_EUR_REQUEST_ID,
+                                UNKNOWN_NON_EUR_REQUEST_ID))
+                .update();
+    }
 
     @Test
     void returnsEveryInvalidFieldInDeterministicOrderWithoutRecording() throws Exception {
-        int ledgerSizeBefore = ledgerAdapter.snapshot().size();
+        int ledgerSizeBefore = ledgerCount();
         String request = """
                 {
                   "requestId": "e55f1e40-6974-46d5-8a87-3cc052377bbb",
@@ -57,31 +82,98 @@ class AuthorizationHttpErrorIntegrationTest {
                 body,
                 List.of("amount", "cardToken", "country", "currency", "merchantCategoryCode"));
         assertTrue(body.contains("\"message\""), body);
-        assertEquals(ledgerSizeBefore, ledgerAdapter.snapshot().size());
+        assertEquals(ledgerSizeBefore, ledgerCount());
     }
 
     @Test
     void malformedJsonReturnsCodeOnlyWithoutRecording() throws Exception {
-        int ledgerSizeBefore = ledgerAdapter.snapshot().size();
+        int ledgerSizeBefore = ledgerCount();
 
         HttpResponse<String> response = post("{not-json");
 
         assertEquals(400, response.statusCode());
         assertEquals("{\"code\":\"MALFORMED_AUTHORIZATION_REQUEST\"}", response.body());
-        assertEquals(ledgerSizeBefore, ledgerAdapter.snapshot().size());
+        assertEquals(ledgerSizeBefore, ledgerCount());
+    }
+
+    @Test
+    void unknownCardTokenWithEurReturnsUnknownTokenWithoutRecording() throws Exception {
+        int ledgerSizeBefore = ledgerCount();
+
+        HttpResponse<String> response = post(validRequestJson(
+                UNKNOWN_EUR_REQUEST_ID,
+                "tok_unknown0001",
+                "EUR"));
+
+        assertEquals(400, response.statusCode());
+        assertEquals("{\"code\":\"UNKNOWN_CARD_TOKEN\"}", response.body());
+        assertEquals(ledgerSizeBefore, ledgerCount());
+        assertEquals(0, requestCount(UNKNOWN_EUR_REQUEST_ID));
+    }
+
+    @Test
+    void knownCardTokenWithNonEurReturnsUnsupportedCurrencyWithoutRecording() throws Exception {
+        int ledgerSizeBefore = ledgerCount();
+
+        HttpResponse<String> response = post(validRequestJson(
+                KNOWN_NON_EUR_REQUEST_ID,
+                "tok_A1B2C3D4",
+                "USD"));
+
+        assertEquals(400, response.statusCode());
+        assertEquals("{\"code\":\"UNSUPPORTED_CURRENCY\"}", response.body());
+        assertEquals(ledgerSizeBefore, ledgerCount());
+        assertEquals(0, requestCount(KNOWN_NON_EUR_REQUEST_ID));
+    }
+
+    @Test
+    void unknownCardTokenWithNonEurReturnsUnsupportedCurrencyWithoutRecording() throws Exception {
+        int ledgerSizeBefore = ledgerCount();
+
+        HttpResponse<String> response = post(validRequestJson(
+                UNKNOWN_NON_EUR_REQUEST_ID,
+                "tok_unknown0001",
+                "USD"));
+
+        assertEquals(400, response.statusCode());
+        assertEquals("{\"code\":\"UNSUPPORTED_CURRENCY\"}", response.body());
+        assertEquals(ledgerSizeBefore, ledgerCount());
+        assertEquals(0, requestCount(UNKNOWN_NON_EUR_REQUEST_ID));
     }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("malformedRepresentations")
     void malformedRepresentationReturnsCodeOnlyWithoutRecording(MalformedScenario scenario)
             throws Exception {
-        int ledgerSizeBefore = ledgerAdapter.snapshot().size();
+        int ledgerSizeBefore = ledgerCount();
 
         HttpResponse<String> response = post(requestJson(scenario));
 
         assertEquals(400, response.statusCode());
         assertEquals("{\"code\":\"MALFORMED_AUTHORIZATION_REQUEST\"}", response.body());
-        assertEquals(ledgerSizeBefore, ledgerAdapter.snapshot().size());
+        assertEquals(ledgerSizeBefore, ledgerCount());
+    }
+
+    private int ledgerCount() {
+        return jdbcClient.sql(
+                        """
+                        SELECT COUNT(*)
+                        FROM "authorization".authorization_ledger
+                        """)
+                .query(Integer.class)
+                .single();
+    }
+
+    private int requestCount(UUID requestId) {
+        return jdbcClient.sql(
+                        """
+                        SELECT COUNT(*)
+                        FROM "authorization".authorization_requests
+                        WHERE request_id = :requestId
+                        """)
+                .param("requestId", requestId)
+                .query(Integer.class)
+                .single();
     }
 
     private HttpResponse<String> post(String body) throws Exception {
@@ -139,6 +231,22 @@ class AuthorizationHttpErrorIntegrationTest {
                 scenario.amountJson(),
                 scenario.channel(),
                 scenario.transactionTime());
+    }
+
+    private static String validRequestJson(UUID requestId, String cardToken, String currency) {
+        return """
+                {
+                  "requestId": "%s",
+                  "cardToken": "%s",
+                  "merchantId": "merchant-standard",
+                  "merchantCategoryCode": "5411",
+                  "amount": 42.50,
+                  "currency": "%s",
+                  "country": "DE",
+                  "channel": "ECOMMERCE",
+                  "transactionTime": "2026-07-20T10:15:30Z"
+                }
+                """.formatted(requestId, cardToken, currency);
     }
 
     private static int occurrences(String value, String target) {

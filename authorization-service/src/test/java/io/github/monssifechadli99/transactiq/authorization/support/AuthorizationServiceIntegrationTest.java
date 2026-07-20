@@ -1,0 +1,23 @@
+package io.github.monssifechadli99.transactiq.authorization.support;
+
+import java.lang.annotation.Documented;
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Inherited;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.core.annotation.AliasFor;
+import org.springframework.context.annotation.Import;
+
+@Target(ElementType.TYPE)
+@Retention(RetentionPolicy.RUNTIME)
+@Documented
+@Inherited
+@SpringBootTest
+@Import(PostgreSqlTestcontainersConfiguration.class)
+public @interface AuthorizationServiceIntegrationTest {
+
+    @AliasFor(annotation = SpringBootTest.class, attribute = "webEnvironment")
+    SpringBootTest.WebEnvironment webEnvironment() default SpringBootTest.WebEnvironment.MOCK;
+}

@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:18.4-alpine3.24
+    environment:
+      POSTGRES_DB: transactiq_authorization
+      POSTGRES_USER: transactiq_local
+      POSTGRES_PASSWORD: transactiq_local
+    ports:
+      - "127.0.0.1:${TRANSACTIQ_POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - transactiq_authorization_postgres_data:/var/lib/postgresql
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U transactiq_local -d transactiq_authorization
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  transactiq_authorization_postgres_data:
