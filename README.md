@@ -8,6 +8,8 @@ demonstration data.
 
 ```text
 Simulator → authorization HTTP → fraud gRPC → PostgreSQL/outbox → Kafka
+                                                                    ↓
+                                                   case management → PostgreSQL
 ```
 
 The Kotlin transaction simulator is the merchant/acquirer-side driver. It calls only
@@ -20,6 +22,8 @@ Current modules:
 
 - `authorization-service`: HTTP authorization workflow, PostgreSQL ledger/reservations, outbox,
   fraud gRPC client, and Kafka outbox relay.
+- `case-management-service`: idempotent Kafka consumer and immutable PostgreSQL fraud-case
+  snapshots.
 - `fraud-contract`: versioned fraud-assessment gRPC contract.
 - `fraud-engine`: deterministic synthetic stateless and velocity fraud rules backed by Redis.
 - `event-contract`: versioned authorization-completed Protobuf contract.
@@ -30,7 +34,7 @@ Current modules:
 Java 21 and Docker Desktop are required. From PowerShell at the repository root:
 
 ```powershell
-docker compose up -d postgres redis kafka
+docker compose up -d postgres case-postgres redis kafka
 ```
 
 Start the two services in separate PowerShell windows:
@@ -41,6 +45,12 @@ Start the two services in separate PowerShell windows:
 
 ```powershell
 .\gradlew.bat :authorization-service:bootRun
+```
+
+Start case management in another window:
+
+```powershell
+.\gradlew.bat :case-management-service:bootRun
 ```
 
 Then run the deterministic simulator catalog in another window:

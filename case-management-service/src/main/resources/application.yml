@@ -1,0 +1,24 @@
+spring:
+  application:
+    name: case-management-service
+  datasource:
+    url: "${CASE_MANAGEMENT_DB_URL:jdbc:postgresql://localhost:${TRANSACTIQ_CASE_POSTGRES_PORT:5434}/transactiq_case_management}"
+    username: "${CASE_MANAGEMENT_DB_USERNAME:transactiq_case_local}"
+    password: "${CASE_MANAGEMENT_DB_PASSWORD:transactiq_case_local}"
+  liquibase:
+    change-log: "classpath:db/changelog/db.changelog-master.xml"
+  kafka:
+    bootstrap-servers: "${TRANSACTIQ_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}"
+    consumer:
+      enable-auto-commit: false
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.ByteArrayDeserializer
+    listener:
+      ack-mode: manual_immediate
+
+fraud-case:
+  consumer:
+    topic: "transactiq.authorization.completed.v1"
+    group-id: "transactiq-case-management-v1"
+    retry-interval: 1s

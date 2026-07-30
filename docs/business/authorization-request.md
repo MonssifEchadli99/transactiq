@@ -86,7 +86,8 @@ Authorization processing generates:
 - Final decision.
 - Decision reason.
 
-Case creation is reserved for a future cycle and is not part of this increment.
+Case creation is asynchronous and is never exposed through or allowed to change this merchant HTTP
+response.
 
 ## Separation of responsibilities
 

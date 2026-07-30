@@ -174,8 +174,9 @@ docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh `
 ```
 
 The value is binary Protobuf, so the console rendering is not human-readable. The automated Kafka
-integration test parses and verifies it. Delivery is at-least-once; future consumers must
-deduplicate using `eventId`. No consumer, fraud-case creation, or DLQ exists yet.
+integration test parses and verifies it. Delivery is at-least-once; Case Management persistently
+deduplicates using `eventId`. See
+[Cycle 5 fraud-case acceptance](cycle-5-manual-acceptance.md). No DLT or DLQ exists yet.
 
 For DBeaver, connect to `localhost:5433` with the database, username, and password shown above, then
 browse the `authorization` schema.

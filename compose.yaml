@@ -17,6 +17,24 @@ services:
       timeout: 5s
       retries: 10
 
+  case-postgres:
+    image: postgres:18.4-alpine3.24
+    environment:
+      POSTGRES_DB: transactiq_case_management
+      POSTGRES_USER: transactiq_case_local
+      POSTGRES_PASSWORD: transactiq_case_local
+    ports:
+      - "127.0.0.1:${TRANSACTIQ_CASE_POSTGRES_PORT:-5434}:5432"
+    volumes:
+      - transactiq_case_management_postgres_data:/var/lib/postgresql
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U transactiq_case_local -d transactiq_case_management
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   redis:
     image: redis:7.4.9-alpine3.21
     ports:
@@ -62,3 +80,4 @@ services:
 
 volumes:
   transactiq_authorization_postgres_data:
+  transactiq_case_management_postgres_data:

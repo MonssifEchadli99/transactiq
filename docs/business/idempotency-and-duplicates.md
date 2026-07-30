@@ -95,3 +95,18 @@ reservation is written, and the pending authorization claim is released. If a fr
 arrives after the client deadline, it cannot complete the released authorization execution. A
 caller retry starts a newly claimed execution while fraud-engine deduplication prevents the same
 request from adding another velocity observation.
+
+## Case-consumer duplicate delivery
+
+Authorization-request idempotency and Kafka-consumer idempotency are separate boundaries. Case
+Management hashes the exact received Kafka value bytes before parsing. Its PostgreSQL transaction
+uses unique constraints on both `source_event_id` and `request_id` as the final concurrency
+guarantee.
+
+- The same `eventId` and byte hash is a successful no-op.
+- The same `eventId` with another hash is a contract conflict.
+- The same `requestId` with another `eventId` is a contract conflict.
+- Concurrent delivery of identical bytes creates exactly one case.
+
+The Kafka offset is acknowledged only after validation and successful database completion. A
+failure or contract conflict advances no offset, and there is no DLT or DLQ in Cycle 5 Increment 1.

@@ -34,8 +34,8 @@ The authorization policy produces the final authorization decision.
 ## V1 decision policy
 
 - `CLEAR`: Approve only when all non-fraud authorization checks pass.
-- `REVIEW`: Do not automatically decline. Preserve the assessment and all matches for future case
-  handling, and approve when all non-fraud authorization checks pass.
+- `REVIEW`: Do not automatically decline. Preserve the assessment and all matches for asynchronous
+  case handling, and approve when all non-fraud authorization checks pass.
 - `HIGH_RISK`: Activate the fraud-decline condition. When non-fraud checks pass, decline with reason
   `HIGH_FRAUD_RISK`.
 
@@ -43,11 +43,11 @@ A non-fraud failure can decline a `CLEAR` transaction without opening a fraud ca
 
 Every newly claimed request continues through the non-fraud evaluation after fraud assessment.
 When insufficient funds coexist with `REVIEW` or `HIGH_RISK`, `INSUFFICIENT_FUNDS` remains the
-authoritative decline reason. This increment does not create fraud cases.
+authoritative decline reason. The resulting completed event still creates a fraud case.
 
-The authorization-completed event separately signals future case work with `caseRequired=false`
+The authorization-completed event separately signals case work with `caseRequired=false`
 for `CLEAR` and `caseRequired=true` for `REVIEW` or `HIGH_RISK`. That signal is independent of the
-decision and decline reason; no case consumer is implemented in this increment.
+decision and decline reason; Case Management validates and consumes it asynchronously.
 
 ## Ledger responsibility
 
@@ -66,8 +66,8 @@ All completion writes occur in one transaction for an existing pending request.
 
 A synthetic EUR 75 transaction receives a `REVIEW` fraud assessment with a score of 15 and passes
 the available-funds check. The authorization policy returns `APPROVED`. The ledger preserves the
-assessment, score, and supporting match for a future case workflow; no case is created in this
-increment.
+assessment, score, and supporting match, and the completed event asynchronously creates a `NEW`
+case with the same snapshot.
 
 ### CLEAR transaction with insufficient funds
 
@@ -79,7 +79,8 @@ A synthetic EUR 120 transaction receives a `HIGH_RISK` fraud assessment and also
 available-funds check. The final decision is `DECLINED` with reason `INSUFFICIENT_FUNDS`, while the
 high-risk assessment and its matches remain stored.
 
-## Future evolution
+## Case-management boundary
 
-A future cycle may create cases from persisted review or high-risk assessments and their original
-scores. Case creation is not part of the current contract.
+Case creation never changes the completed authorization. PostgreSQL owned by Case Management is
+the source of truth for the immutable investigation snapshot. Assignment, status transitions,
+resolution, search, and analyst APIs are outside Cycle 5 Increment 1.

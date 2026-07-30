@@ -11,6 +11,7 @@ plugins {
 rootProject.name = "transactiq"
 
 include("authorization-service")
+include("case-management-service")
 include("event-contract")
 include("fraud-contract")
 include("fraud-engine")

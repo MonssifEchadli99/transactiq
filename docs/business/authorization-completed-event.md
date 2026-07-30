@@ -34,8 +34,8 @@ project are synthetic; the score is informational and is not a probability.
 
 `caseRequired` is independent of the authorization decision and primary decline reason. For
 example, a synthetic `REVIEW` transaction with insufficient funds is `DECLINED` with
-`INSUFFICIENT_FUNDS`, while its event has `caseRequired=true`. This increment emits that signal but
-does not create a case or implement a Kafka consumer.
+`INSUFFICIENT_FUNDS`, while its event has `caseRequired=true`. Case Management consumes this signal
+asynchronously and preserves both the primary decline reason and the suspicious evidence.
 
 ## Transaction and publication boundary
 
@@ -51,11 +51,12 @@ is marked `PUBLISHED`. A failed send returns the row to `PENDING`, increments it
 records only `KAFKA_PUBLISH_FAILED`, and schedules a positive exponentially increasing backoff
 bounded by the configured maximum. An expired lease is eligible for another relay instance.
 
-Publication is asynchronous and at-least-once. A process crash after Kafka acknowledges a message
-but before PostgreSQL records publication can produce a duplicate. Producer idempotence reduces
-some producer retries but does not provide end-to-end exactly-once delivery. Every future consumer
-must therefore persistently deduplicate by `eventId`. A DLQ and consumer retry policy belong to a
-future cycle.
+Publication and case consumption are asynchronous and at-least-once. A process crash after Kafka
+acknowledges a message but before PostgreSQL records publication can produce a duplicate. Producer
+idempotence reduces some producer retries but does not provide end-to-end exactly-once delivery.
+Case Management therefore stores the SHA-256 hash of the exact Kafka value bytes and persistently
+deduplicates by `eventId`. The same identifier and hash is a successful no-op; changed bytes for an
+existing identifier are a contract conflict. No DLT or DLQ exists in Cycle 5 Increment 1.
 
 ## Token handling
 

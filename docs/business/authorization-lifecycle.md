@@ -62,8 +62,10 @@ one PostgreSQL transaction.
 
 Kafka unavailability occurs after this transaction boundary. It does not undo a completed
 authorization: the outbox event stays retryable until the asynchronous relay receives a broker
-acknowledgement. Delivery is at-least-once, so future consumers must deduplicate with the stable
-`eventId`. See [authorization-completed-event.md](authorization-completed-event.md).
+acknowledgement. Delivery is at-least-once. Case Management validates each event and atomically
+creates one immutable `NEW`, unassigned case for `REVIEW` or `HIGH_RISK`, while persistently
+deduplicating with the stable `eventId`. A `CLEAR` event is acknowledged without a case.
+See [authorization-completed-event.md](authorization-completed-event.md).
 
 The card-account row lock serializes concurrent balance decisions for the same account. A later
 transaction evaluates the available balance after an earlier reservation commits.
@@ -83,7 +85,7 @@ can start a new execution.
 
 - A synthetic transaction assessed as `CLEAR`, with sufficient funds and a valid card, becomes `APPROVED`.
 - A synthetic transaction assessed as `REVIEW`, with sufficient funds, becomes `APPROVED`; its
-  score and matches remain persisted for future case handling.
+  completed event asynchronously creates a case containing the original score and matches.
 - A synthetic transaction assessed as `HIGH_RISK`, with sufficient funds, becomes `DECLINED` with
   reason `HIGH_FRAUD_RISK`.
 - A synthetic transaction assessed as `CLEAR` but with insufficient funds becomes `DECLINED` with reason `INSUFFICIENT_FUNDS`; no fraud case is opened.
