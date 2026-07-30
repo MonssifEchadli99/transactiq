@@ -11,12 +11,17 @@ import io.github.monssifechadli99.transactiq.authorization.adapter.out.transacti
 import io.github.monssifechadli99.transactiq.authorization.application.model.AuthorizationChannel;
 import io.github.monssifechadli99.transactiq.authorization.application.model.IdempotencyClaimResult.Claimed;
 import io.github.monssifechadli99.transactiq.authorization.application.port.in.AuthorizationCommand;
+import io.github.monssifechadli99.transactiq.authorization.application.port.out.AuthorizationCompletedEventOutboxPort;
 import io.github.monssifechadli99.transactiq.authorization.application.port.out.IdempotencyClaimPort;
 import io.github.monssifechadli99.transactiq.authorization.application.service.AuthorizationCompletionService;
 import io.github.monssifechadli99.transactiq.authorization.domain.AuthorizationOutcome;
 import io.github.monssifechadli99.transactiq.authorization.domain.DeclineReason;
 import io.github.monssifechadli99.transactiq.authorization.domain.FraudAssessment;
+import io.github.monssifechadli99.transactiq.authorization.domain.FraudAssessmentResult;
+import io.github.monssifechadli99.transactiq.authorization.domain.FraudRuleMatch;
+import io.github.monssifechadli99.transactiq.authorization.domain.FraudRuleSeverity;
 import io.github.monssifechadli99.transactiq.authorization.domain.AuthorizationPolicy;
+import io.github.monssifechadli99.transactiq.authorization.event.contract.v1.AuthorizationCompletedEvent;
 import io.github.monssifechadli99.transactiq.authorization.support.AuthorizationServiceIntegrationTest;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -58,6 +63,9 @@ class JdbcAuthorizationCompletionIntegrationTest {
     @Autowired
     private IdempotencyClaimPort idempotencyClaimPort;
 
+    @Autowired
+    private AuthorizationCompletedEventOutboxPort authorizationCompletedEventOutboxPort;
+
     private AuthorizationCompletionService completionService;
 
     @BeforeEach
@@ -66,11 +74,23 @@ class JdbcAuthorizationCompletionIntegrationTest {
                 new SpringTransactionExecutor(new TransactionTemplate(transactionManager)),
                 new JdbcNonFraudCheckAdapter(jdbcClient),
                 new JdbcAuthorizationLedgerAdapter(jdbcClient),
+                authorizationCompletedEventOutboxPort,
                 new AuthorizationPolicy());
     }
 
     @AfterEach
     void removeCompletionTestData() {
+        jdbcClient.sql(
+                        """
+                        DROP TRIGGER IF EXISTS fail_authorization_outbox_for_test
+                        ON "authorization".authorization_outbox
+                        """)
+                .update();
+        jdbcClient.sql(
+                        """
+                        DROP FUNCTION IF EXISTS "authorization".fail_authorization_outbox_for_test()
+                        """)
+                .update();
         jdbcClient.sql(
                         """
                         DROP TRIGGER IF EXISTS fail_authorization_completion_for_test
@@ -119,17 +139,18 @@ class JdbcAuthorizationCompletionIntegrationTest {
     }
 
     @Test
-    void approvalPersistsLedgerReservationAndReservedBalanceAtomically() {
+    void approvalPersistsLedgerReservationReservedBalanceAndOutboxAtomically() {
         AuthorizationCommand command = command(
                 "30000000-0000-4000-8000-000000000001", new BigDecimal("125.00"));
         claim(command);
 
-        AuthorizationOutcome outcome = completionService.complete(command, FraudAssessment.CLEAR);
+        AuthorizationOutcome outcome = completionService.complete(
+                command, FraudAssessmentResult.clear());
 
         assertInstanceOf(AuthorizationOutcome.Approved.class, outcome);
         assertEquals(new BigDecimal("125.00"), reservedAmount());
         assertEquals(
-                new PersistedLedger("APPROVED", null, "CLEAR", "PASSED"),
+                new PersistedLedger("APPROVED", null, "CLEAR", 0, "PASSED"),
                 ledger(command.requestId()));
         PersistedReservation reservation = reservation(command.requestId());
         assertNotNull(reservation.reservationId());
@@ -138,6 +159,7 @@ class JdbcAuthorizationCompletionIntegrationTest {
         assertEquals(new BigDecimal("125.00"), reservation.amount());
         assertEquals("EUR", reservation.currency());
         assertEquals("ACTIVE", reservation.status());
+        assertEquals(1, outboxCount(command.requestId()));
         assertCompleted(command.requestId());
     }
 
@@ -149,47 +171,60 @@ class JdbcAuthorizationCompletionIntegrationTest {
 
         AuthorizationOutcome.Declined outcome = assertInstanceOf(
                 AuthorizationOutcome.Declined.class,
-                completionService.complete(command, FraudAssessment.CLEAR));
+                completionService.complete(command, FraudAssessmentResult.clear()));
 
         assertEquals(DeclineReason.INSUFFICIENT_FUNDS, outcome.declineReason());
         assertEquals(new BigDecimal("0.00"), reservedAmount());
         assertEquals(0, reservationCount(command.requestId()));
         assertEquals(
                 new PersistedLedger(
-                        "DECLINED", "INSUFFICIENT_FUNDS", "CLEAR", "INSUFFICIENT_FUNDS"),
+                        "DECLINED", "INSUFFICIENT_FUNDS", "CLEAR", 0, "INSUFFICIENT_FUNDS"),
                 ledger(command.requestId()));
+        assertEquals(1, outboxCount(command.requestId()));
         assertCompleted(command.requestId());
     }
 
     @Test
-    void reviewDeclinePersistsFraudReviewReasonWithoutReservation() {
+    void reviewAssessmentIsApprovedAndRequiresCaseInStoredEvent() throws Exception {
         AuthorizationCommand command = command(
                 "30000000-0000-4000-8000-000000000003", new BigDecimal("75.00"));
         claim(command);
 
-        AuthorizationOutcome.Declined outcome = assertInstanceOf(
-                AuthorizationOutcome.Declined.class,
-                completionService.complete(command, FraudAssessment.REVIEW));
+        FraudAssessmentResult assessment = assessment(
+                FraudAssessment.REVIEW, FraudRuleSeverity.REVIEW, "MERCHANT_REVIEW");
+        AuthorizationOutcome outcome = completionService.complete(command, assessment);
 
-        assertEquals(DeclineReason.FRAUD_REVIEW_REQUIRED, outcome.declineReason());
+        AuthorizationOutcome.Approved approved =
+                assertInstanceOf(AuthorizationOutcome.Approved.class, outcome);
+        assertTrue(approved.fraudCaseRequired());
         assertEquals(
-                new PersistedLedger(
-                        "DECLINED", "FRAUD_REVIEW_REQUIRED", "REVIEW", "PASSED"),
+                new PersistedLedger("APPROVED", null, "REVIEW", 15, "PASSED"),
                 ledger(command.requestId()));
-        assertEquals(new BigDecimal("0.00"), reservedAmount());
-        assertEquals(0, reservationCount(command.requestId()));
+        assertEquals(new BigDecimal("75.00"), reservedAmount());
+        assertEquals(1, reservationCount(command.requestId()));
+        assertEquals(
+                List.of(new PersistedFraudRuleMatch(
+                        "MERCHANT_REVIEW", "REVIEW", "Synthetic fraud evidence", 15)),
+                fraudRuleMatches(command.requestId()));
+        assertEquals(1, outboxCount(command.requestId()));
+        assertTrue(outboxEvent(command.requestId()).getCaseRequired());
         assertCompleted(command.requestId());
     }
 
     @Test
-    void highRiskWithInsufficientFundsPreservesInsufficientFundsReason() {
+    void highRiskWithInsufficientFundsPreservesInsufficientFundsReason() throws Exception {
         AuthorizationCommand command = command(
                 "30000000-0000-4000-8000-000000000004", new BigDecimal("1000.01"));
         claim(command);
 
         AuthorizationOutcome.Declined outcome = assertInstanceOf(
                 AuthorizationOutcome.Declined.class,
-                completionService.complete(command, FraudAssessment.HIGH_RISK));
+                completionService.complete(
+                        command,
+                        assessment(
+                                FraudAssessment.HIGH_RISK,
+                                FraudRuleSeverity.HIGH_RISK,
+                                "MERCHANT_HIGH_RISK")));
 
         assertEquals(DeclineReason.INSUFFICIENT_FUNDS, outcome.declineReason());
         assertTrue(outcome.fraudCaseRequired());
@@ -198,10 +233,35 @@ class JdbcAuthorizationCompletionIntegrationTest {
                         "DECLINED",
                         "INSUFFICIENT_FUNDS",
                         "HIGH_RISK",
+                        75,
                         "INSUFFICIENT_FUNDS"),
                 ledger(command.requestId()));
         assertEquals(0, reservationCount(command.requestId()));
+        assertEquals(1, outboxCount(command.requestId()));
+        assertTrue(outboxEvent(command.requestId()).getCaseRequired());
         assertCompleted(command.requestId());
+    }
+
+    @Test
+    void reviewWithInsufficientFundsStillRequiresCaseInStoredEvent() throws Exception {
+        AuthorizationCommand command = command(
+                "30000000-0000-4000-8000-000000000006", new BigDecimal("1000.01"));
+        claim(command);
+
+        AuthorizationOutcome.Declined outcome = assertInstanceOf(
+                AuthorizationOutcome.Declined.class,
+                completionService.complete(
+                        command,
+                        assessment(
+                                FraudAssessment.REVIEW,
+                                FraudRuleSeverity.REVIEW,
+                                "MERCHANT_REVIEW")));
+
+        assertEquals(DeclineReason.INSUFFICIENT_FUNDS, outcome.declineReason());
+        AuthorizationCompletedEvent event = outboxEvent(command.requestId());
+        assertTrue(event.getCaseRequired());
+        assertEquals(15, event.getRiskScore());
+        assertEquals("MERCHANT_REVIEW", event.getMatchedRules(0).getRuleCode());
     }
 
     @Test
@@ -212,11 +272,31 @@ class JdbcAuthorizationCompletionIntegrationTest {
 
         assertThrows(
                 RuntimeException.class,
-                () -> completionService.complete(command, FraudAssessment.CLEAR));
+                () -> completionService.complete(command, FraudAssessmentResult.clear()));
 
         assertEquals(new BigDecimal("0.00"), reservedAmount());
         assertEquals(0, ledgerCount(command.requestId()));
         assertEquals(0, reservationCount(command.requestId()));
+        assertEquals(0, outboxCount(command.requestId()));
+        PersistedRequest request = request(command.requestId());
+        assertEquals("PENDING", request.status());
+        assertFalse(request.completed());
+    }
+
+    @Test
+    void outboxInsertFailureRollsBackLedgerReservationBalanceAndCompletion() {
+        AuthorizationCommand command = command(FAILURE_REQUEST_ID.toString(), new BigDecimal("100.00"));
+        claim(command);
+        installOutboxFailureTrigger();
+
+        assertThrows(
+                RuntimeException.class,
+                () -> completionService.complete(command, FraudAssessmentResult.clear()));
+
+        assertEquals(new BigDecimal("0.00"), reservedAmount());
+        assertEquals(0, ledgerCount(command.requestId()));
+        assertEquals(0, reservationCount(command.requestId()));
+        assertEquals(0, outboxCount(command.requestId()));
         PersistedRequest request = request(command.requestId());
         assertEquals("PENDING", request.status());
         assertFalse(request.completed());
@@ -277,7 +357,7 @@ class JdbcAuthorizationCompletionIntegrationTest {
             throws InterruptedException {
         ready.countDown();
         assertTrue(start.await(10, TimeUnit.SECONDS));
-        return completionService.complete(command, FraudAssessment.CLEAR);
+        return completionService.complete(command, FraudAssessmentResult.clear());
     }
 
     private void claim(AuthorizationCommand command) {
@@ -313,6 +393,30 @@ class JdbcAuthorizationCompletionIntegrationTest {
                 .update();
     }
 
+    private void installOutboxFailureTrigger() {
+        jdbcClient.sql(
+                        """
+                        CREATE FUNCTION "authorization".fail_authorization_outbox_for_test()
+                        RETURNS trigger
+                        LANGUAGE plpgsql
+                        AS $$
+                        BEGIN
+                            RAISE EXCEPTION 'forced authorization outbox failure';
+                        END;
+                        $$
+                        """)
+                .update();
+        jdbcClient.sql(
+                        """
+                        CREATE TRIGGER fail_authorization_outbox_for_test
+                        BEFORE INSERT
+                        ON "authorization".authorization_outbox
+                        FOR EACH ROW
+                        EXECUTE FUNCTION "authorization".fail_authorization_outbox_for_test()
+                        """)
+                .update();
+    }
+
     private BigDecimal reservedAmount() {
         return jdbcClient.sql(
                         """
@@ -340,7 +444,8 @@ class JdbcAuthorizationCompletionIntegrationTest {
     private PersistedLedger ledger(UUID requestId) {
         return jdbcClient.sql(
                         """
-                        SELECT decision, decline_reason, fraud_assessment, non_fraud_check_result
+                        SELECT decision, decline_reason, fraud_assessment, risk_score,
+                               non_fraud_check_result
                         FROM "authorization".authorization_ledger
                         WHERE request_id = :requestId
                         """)
@@ -349,6 +454,7 @@ class JdbcAuthorizationCompletionIntegrationTest {
                         resultSet.getString("decision"),
                         resultSet.getString("decline_reason"),
                         resultSet.getString("fraud_assessment"),
+                        resultSet.getInt("risk_score"),
                         resultSet.getString("non_fraud_check_result")))
                 .single();
     }
@@ -369,6 +475,23 @@ class JdbcAuthorizationCompletionIntegrationTest {
                         resultSet.getString("currency"),
                         resultSet.getString("status")))
                 .single();
+    }
+
+    private List<PersistedFraudRuleMatch> fraudRuleMatches(UUID requestId) {
+        return jdbcClient.sql(
+                        """
+                        SELECT rule_code, severity, evidence, score_contribution
+                        FROM "authorization".fraud_rule_matches
+                        WHERE request_id = :requestId
+                        ORDER BY match_order
+                        """)
+                .param("requestId", requestId)
+                .query((resultSet, rowNumber) -> new PersistedFraudRuleMatch(
+                        resultSet.getString("rule_code"),
+                        resultSet.getString("severity"),
+                        resultSet.getString("evidence"),
+                        resultSet.getInt("score_contribution")))
+                .list();
     }
 
     private PersistedRequest request(UUID requestId) {
@@ -400,6 +523,31 @@ class JdbcAuthorizationCompletionIntegrationTest {
                 .param("requestId", requestId)
                 .query(Integer.class)
                 .single();
+    }
+
+    private int outboxCount(UUID requestId) {
+        return jdbcClient.sql(
+                        """
+                        SELECT COUNT(*)
+                        FROM "authorization".authorization_outbox
+                        WHERE request_id = :requestId
+                        """)
+                .param("requestId", requestId)
+                .query(Integer.class)
+                .single();
+    }
+
+    private AuthorizationCompletedEvent outboxEvent(UUID requestId) throws Exception {
+        byte[] payload = jdbcClient.sql(
+                        """
+                        SELECT payload
+                        FROM "authorization".authorization_outbox
+                        WHERE request_id = :requestId
+                        """)
+                .param("requestId", requestId)
+                .query(byte[].class)
+                .single();
+        return AuthorizationCompletedEvent.parseFrom(payload);
     }
 
     private int ledgerCount(List<UUID> requestIdsToCount) {
@@ -493,10 +641,21 @@ class JdbcAuthorizationCompletionIntegrationTest {
                 TRANSACTION_TIME);
     }
 
+    private static FraudAssessmentResult assessment(
+            FraudAssessment assessment, FraudRuleSeverity severity, String ruleCode) {
+        int score = severity == FraudRuleSeverity.REVIEW ? 15 : 75;
+        return new FraudAssessmentResult(
+                assessment,
+                score,
+                List.of(new FraudRuleMatch(
+                        ruleCode, severity, "Synthetic fraud evidence", score)));
+    }
+
     private record PersistedLedger(
             String decision,
             String declineReason,
             String fraudAssessment,
+            int riskScore,
             String nonFraudCheckResult) {}
 
     private record PersistedReservation(
@@ -506,6 +665,9 @@ class JdbcAuthorizationCompletionIntegrationTest {
             BigDecimal amount,
             String currency,
             String status) {}
+
+    private record PersistedFraudRuleMatch(
+            String ruleCode, String severity, String evidence, int scoreContribution) {}
 
     private record PersistedRequest(String status, boolean completed) {}
 }

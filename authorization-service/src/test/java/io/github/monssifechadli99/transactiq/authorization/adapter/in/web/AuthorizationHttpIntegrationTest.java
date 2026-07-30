@@ -119,12 +119,12 @@ class AuthorizationHttpIntegrationTest {
                         "APPROVED",
                         null),
                 new Scenario(
-                        "review merchant is declined",
+                        "review merchant is approved",
                         UUID.fromString("b0b2f16b-7a49-4491-8760-d65017fd7f22"),
                         "merchant-review",
                         "tok_A1B2C3D4",
-                        "DECLINED",
-                        "FRAUD_REVIEW_REQUIRED"),
+                        "APPROVED",
+                        null),
                 new Scenario(
                         "high-risk merchant is declined",
                         UUID.fromString("ff78b3eb-3696-4b66-aac2-d24e32296118"),

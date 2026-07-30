@@ -11,10 +11,14 @@ import io.github.monssifechadli99.transactiq.authorization.domain.AuthorizationD
 import io.github.monssifechadli99.transactiq.authorization.domain.AuthorizationOutcome;
 import io.github.monssifechadli99.transactiq.authorization.domain.DeclineReason;
 import io.github.monssifechadli99.transactiq.authorization.domain.FraudAssessment;
+import io.github.monssifechadli99.transactiq.authorization.domain.FraudAssessmentResult;
+import io.github.monssifechadli99.transactiq.authorization.domain.FraudRuleMatch;
+import io.github.monssifechadli99.transactiq.authorization.domain.FraudRuleSeverity;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -110,7 +114,8 @@ public final class JdbcIdempotencyClaimAdapter implements IdempotencyClaimPort {
                                request.status,
                                ledger.decision,
                                ledger.decline_reason,
-                               ledger.fraud_assessment
+                               ledger.fraud_assessment,
+                               ledger.risk_score
                         FROM "authorization".authorization_requests request
                         LEFT JOIN "authorization".authorization_ledger ledger
                           ON ledger.request_id = request.request_id
@@ -122,7 +127,8 @@ public final class JdbcIdempotencyClaimAdapter implements IdempotencyClaimPort {
                         resultSet.getString("status"),
                         resultSet.getString("decision"),
                         resultSet.getString("decline_reason"),
-                        resultSet.getString("fraud_assessment")))
+                        resultSet.getString("fraud_assessment"),
+                        resultSet.getObject("risk_score", Integer.class)))
                 .optional()
                 .orElseThrow(() -> new IllegalStateException(
                         "Idempotency claim disappeared during transaction"));
@@ -133,10 +139,41 @@ public final class JdbcIdempotencyClaimAdapter implements IdempotencyClaimPort {
 
         return switch (storedClaim.status()) {
             case "PENDING" -> new Pending();
-            case "COMPLETED" -> new Completed(reconstructOutcome(storedClaim));
+            case "COMPLETED" -> new Completed(
+                    reconstructOutcome(storedClaim),
+                    reconstructFraudAssessment(command.requestId(), storedClaim));
             default -> throw new IllegalStateException(
                     "Unsupported authorization request status: " + storedClaim.status());
         };
+    }
+
+    private FraudAssessmentResult reconstructFraudAssessment(
+            UUID requestId, StoredClaim storedClaim) {
+        if (storedClaim.fraudAssessment() == null) {
+            throw new IllegalStateException("Completed request has no stored fraud assessment");
+        }
+
+        List<FraudRuleMatch> matchedRules = jdbcClient.sql(
+                        """
+                        SELECT rule_code, severity, evidence, score_contribution
+                        FROM "authorization".fraud_rule_matches
+                        WHERE request_id = :requestId
+                        ORDER BY match_order
+                        """)
+                .param("requestId", requestId)
+                .query((resultSet, rowNumber) -> new FraudRuleMatch(
+                        resultSet.getString("rule_code"),
+                        FraudRuleSeverity.valueOf(resultSet.getString("severity")),
+                        resultSet.getString("evidence"),
+                        resultSet.getInt("score_contribution")))
+                .list();
+        if (storedClaim.riskScore() == null) {
+            throw new IllegalStateException("Completed request has no stored fraud risk score");
+        }
+        return new FraudAssessmentResult(
+                FraudAssessment.valueOf(storedClaim.fraudAssessment()),
+                storedClaim.riskScore(),
+                matchedRules);
     }
 
     private static AuthorizationOutcome reconstructOutcome(StoredClaim storedClaim) {
@@ -145,16 +182,16 @@ public final class JdbcIdempotencyClaimAdapter implements IdempotencyClaimPort {
         }
 
         AuthorizationDecision decision = AuthorizationDecision.valueOf(storedClaim.decision());
+        boolean fraudCaseRequired = FraudAssessment.valueOf(storedClaim.fraudAssessment())
+                != FraudAssessment.CLEAR;
         return switch (decision) {
-            case APPROVED -> new AuthorizationOutcome.Approved();
+            case APPROVED -> new AuthorizationOutcome.Approved(fraudCaseRequired);
             case DECLINED -> {
                 if (storedClaim.declineReason() == null) {
                     throw new IllegalStateException(
                             "Completed declined request has no stored decline reason");
                 }
                 DeclineReason declineReason = DeclineReason.valueOf(storedClaim.declineReason());
-                boolean fraudCaseRequired = FraudAssessment.valueOf(storedClaim.fraudAssessment())
-                        != FraudAssessment.CLEAR;
                 yield new AuthorizationOutcome.Declined(declineReason, fraudCaseRequired);
             }
         };
@@ -230,5 +267,6 @@ public final class JdbcIdempotencyClaimAdapter implements IdempotencyClaimPort {
             String status,
             String decision,
             String declineReason,
-            String fraudAssessment) {}
+            String fraudAssessment,
+            Integer riskScore) {}
 }

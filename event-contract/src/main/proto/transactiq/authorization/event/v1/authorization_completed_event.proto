@@ -1,0 +1,75 @@
+syntax = "proto3";
+
+package transactiq.authorization.event.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "io.github.monssifechadli99.transactiq.authorization.event.contract.v1";
+option java_outer_classname = "AuthorizationCompletedEventContractProto";
+
+enum EventChannel {
+  EVENT_CHANNEL_UNSPECIFIED = 0;
+  EVENT_CHANNEL_ECOMMERCE = 1;
+  EVENT_CHANNEL_POINT_OF_SALE = 2;
+}
+
+enum EventNonFraudResult {
+  EVENT_NON_FRAUD_RESULT_UNSPECIFIED = 0;
+  EVENT_NON_FRAUD_RESULT_PASSED = 1;
+  EVENT_NON_FRAUD_RESULT_INSUFFICIENT_FUNDS = 2;
+}
+
+enum EventAuthorizationDecision {
+  EVENT_AUTHORIZATION_DECISION_UNSPECIFIED = 0;
+  EVENT_AUTHORIZATION_DECISION_APPROVED = 1;
+  EVENT_AUTHORIZATION_DECISION_DECLINED = 2;
+}
+
+enum EventDeclineReason {
+  EVENT_DECLINE_REASON_UNSPECIFIED = 0;
+  EVENT_DECLINE_REASON_INSUFFICIENT_FUNDS = 1;
+  EVENT_DECLINE_REASON_HIGH_FRAUD_RISK = 2;
+  EVENT_DECLINE_REASON_FRAUD_REVIEW_REQUIRED = 3;
+}
+
+enum EventFraudAssessment {
+  EVENT_FRAUD_ASSESSMENT_UNSPECIFIED = 0;
+  EVENT_FRAUD_ASSESSMENT_CLEAR = 1;
+  EVENT_FRAUD_ASSESSMENT_REVIEW = 2;
+  EVENT_FRAUD_ASSESSMENT_HIGH_RISK = 3;
+}
+
+enum EventFraudRuleSeverity {
+  EVENT_FRAUD_RULE_SEVERITY_UNSPECIFIED = 0;
+  EVENT_FRAUD_RULE_SEVERITY_REVIEW = 1;
+  EVENT_FRAUD_RULE_SEVERITY_HIGH_RISK = 2;
+}
+
+message EventFraudRuleMatch {
+  string rule_code = 1;
+  EventFraudRuleSeverity severity = 2;
+  string evidence = 3;
+  optional int32 score_contribution = 4;
+}
+
+message AuthorizationCompletedEvent {
+  string event_id = 1;
+  google.protobuf.Timestamp occurred_at = 2;
+  string request_id = 3;
+  string card_token_fingerprint = 4;
+  string merchant_id = 5;
+  string merchant_category_code = 6;
+  string amount = 7;
+  string currency = 8;
+  string country = 9;
+  EventChannel channel = 10;
+  google.protobuf.Timestamp transaction_time = 11;
+  EventNonFraudResult non_fraud_result = 12;
+  EventAuthorizationDecision decision = 13;
+  optional EventDeclineReason decline_reason = 14;
+  EventFraudAssessment fraud_assessment = 15;
+  optional int32 risk_score = 16;
+  repeated EventFraudRuleMatch matched_rules = 17;
+  bool case_required = 18;
+}

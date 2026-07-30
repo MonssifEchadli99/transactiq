@@ -29,6 +29,8 @@ class AuthorizationHttpErrorIntegrationTest {
             UUID.fromString("10000000-0000-4000-8000-000000000002");
     private static final UUID UNKNOWN_NON_EUR_REQUEST_ID =
             UUID.fromString("10000000-0000-4000-8000-000000000003");
+    private static final UUID OUTBOX_FAILURE_REQUEST_ID =
+            UUID.fromString("10000000-0000-4000-8000-000000000004");
 
     private final HttpClient httpClient = HttpClient.newHttpClient();
 
@@ -42,6 +44,17 @@ class AuthorizationHttpErrorIntegrationTest {
     void removeRejectedRequestTestData() {
         jdbcClient.sql(
                         """
+                        DROP TRIGGER IF EXISTS fail_authorization_outbox_http_for_test
+                        ON "authorization".authorization_outbox
+                        """)
+                .update();
+        jdbcClient.sql(
+                        """
+                        DROP FUNCTION IF EXISTS "authorization".fail_authorization_outbox_http_for_test()
+                        """)
+                .update();
+        jdbcClient.sql(
+                        """
                         DELETE FROM "authorization".authorization_requests
                         WHERE request_id IN (:requestIds)
                         """)
@@ -50,8 +63,24 @@ class AuthorizationHttpErrorIntegrationTest {
                         List.of(
                                 UNKNOWN_EUR_REQUEST_ID,
                                 KNOWN_NON_EUR_REQUEST_ID,
-                                UNKNOWN_NON_EUR_REQUEST_ID))
+                                UNKNOWN_NON_EUR_REQUEST_ID,
+                                OUTBOX_FAILURE_REQUEST_ID))
                 .update();
+    }
+
+    @Test
+    void outboxInsertionFailureRollsBackCompletionAndReleasesClaim() throws Exception {
+        installOutboxFailureTrigger();
+
+        HttpResponse<String> response = post(validRequestJson(
+                OUTBOX_FAILURE_REQUEST_ID,
+                "tok_A1B2C3D4",
+                "EUR"));
+
+        assertEquals(500, response.statusCode());
+        assertEquals("{\"code\":\"AUTHORIZATION_PROCESSING_ERROR\"}", response.body());
+        assertEquals(0, requestCount(OUTBOX_FAILURE_REQUEST_ID));
+        assertEquals(0, outboxCount(OUTBOX_FAILURE_REQUEST_ID));
     }
 
     @Test
@@ -174,6 +203,42 @@ class AuthorizationHttpErrorIntegrationTest {
                 .param("requestId", requestId)
                 .query(Integer.class)
                 .single();
+    }
+
+    private int outboxCount(UUID requestId) {
+        return jdbcClient.sql(
+                        """
+                        SELECT COUNT(*)
+                        FROM "authorization".authorization_outbox
+                        WHERE request_id = :requestId
+                        """)
+                .param("requestId", requestId)
+                .query(Integer.class)
+                .single();
+    }
+
+    private void installOutboxFailureTrigger() {
+        jdbcClient.sql(
+                        """
+                        CREATE FUNCTION "authorization".fail_authorization_outbox_http_for_test()
+                        RETURNS trigger
+                        LANGUAGE plpgsql
+                        AS $$
+                        BEGIN
+                            RAISE EXCEPTION 'forced authorization outbox HTTP failure';
+                        END;
+                        $$
+                        """)
+                .update();
+        jdbcClient.sql(
+                        """
+                        CREATE TRIGGER fail_authorization_outbox_http_for_test
+                        BEFORE INSERT
+                        ON "authorization".authorization_outbox
+                        FOR EACH ROW
+                        EXECUTE FUNCTION "authorization".fail_authorization_outbox_http_for_test()
+                        """)
+                .update();
     }
 
     private HttpResponse<String> post(String body) throws Exception {

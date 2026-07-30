@@ -5,7 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import io.github.monssifechadli99.transactiq.authorization.application.port.in.AuthorizationCommand;
 import io.github.monssifechadli99.transactiq.authorization.application.port.out.FraudAssessmentPort;
-import io.github.monssifechadli99.transactiq.authorization.domain.FraudAssessment;
+import io.github.monssifechadli99.transactiq.authorization.domain.FraudAssessmentResult;
 import io.github.monssifechadli99.transactiq.authorization.support.AuthorizationServiceIntegrationTest;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -119,7 +119,7 @@ class AuthorizationTechnicalFailureHttpIntegrationTest {
     private static final class TechnicallyFailingFraudAdapter implements FraudAssessmentPort {
 
         @Override
-        public FraudAssessment assess(AuthorizationCommand command) {
+        public FraudAssessmentResult assess(AuthorizationCommand command) {
             throw new IllegalStateException("sensitive internal failure");
         }
     }

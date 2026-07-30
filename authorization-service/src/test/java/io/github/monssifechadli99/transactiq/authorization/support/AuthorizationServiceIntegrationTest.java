@@ -14,8 +14,14 @@ import org.springframework.context.annotation.Import;
 @Retention(RetentionPolicy.RUNTIME)
 @Documented
 @Inherited
-@SpringBootTest
-@Import(PostgreSqlTestcontainersConfiguration.class)
+@SpringBootTest(properties = {
+    "fraud.grpc.client.enabled=false",
+    "authorization.outbox.publisher.enabled=false"
+})
+@Import({
+    PostgreSqlTestcontainersConfiguration.class,
+    FraudAssessmentTestConfiguration.class
+})
 public @interface AuthorizationServiceIntegrationTest {
 
     @AliasFor(annotation = SpringBootTest.class, attribute = "webEnvironment")

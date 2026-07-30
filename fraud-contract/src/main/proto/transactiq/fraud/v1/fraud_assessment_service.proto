@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+package transactiq.fraud.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "io.github.monssifechadli99.transactiq.fraud.contract.v1";
+option java_outer_classname = "FraudAssessmentContractProto";
+
+// Versioned, synchronous fraud-assessment contract shared between authorization-service and
+// fraud-engine. See docs/business/fraud-assessment.md for the business contract this mirrors.
+service FraudAssessmentService {
+  rpc Assess(AssessFraudRequest) returns (AssessFraudResponse);
+}
+
+enum TransactionChannel {
+  TRANSACTION_CHANNEL_UNSPECIFIED = 0;
+  TRANSACTION_CHANNEL_ECOMMERCE = 1;
+  TRANSACTION_CHANNEL_POINT_OF_SALE = 2;
+}
+
+message AssessFraudRequest {
+  string request_id = 1;
+  string card_token = 2;
+  string merchant_id = 3;
+  string merchant_category_code = 4;
+  // Canonical fixed-point decimal string (for example "1200.00"). Never a floating-point
+  // type, so the exact amount survives the wire without precision loss.
+  string amount = 5;
+  string currency = 6;
+  string country = 7;
+  TransactionChannel channel = 8;
+  google.protobuf.Timestamp transaction_time = 9;
+}
+
+enum FraudAssessmentOutcome {
+  FRAUD_ASSESSMENT_OUTCOME_UNSPECIFIED = 0;
+  FRAUD_ASSESSMENT_OUTCOME_CLEAR = 1;
+  FRAUD_ASSESSMENT_OUTCOME_REVIEW = 2;
+  FRAUD_ASSESSMENT_OUTCOME_HIGH_RISK = 3;
+}
+
+// Only REVIEW and HIGH_RISK exist: a matched rule always elevates risk, and the highest
+// matched severity becomes the overall assessment. CLEAR means no rule matched.
+enum RuleMatchSeverity {
+  RULE_MATCH_SEVERITY_UNSPECIFIED = 0;
+  RULE_MATCH_SEVERITY_REVIEW = 1;
+  RULE_MATCH_SEVERITY_HIGH_RISK = 2;
+}
+
+message RuleMatch {
+  string rule_code = 1;
+  RuleMatchSeverity severity = 2;
+  string evidence = 3;
+  optional int32 score_contribution = 4;
+}
+
+message AssessFraudResponse {
+  FraudAssessmentOutcome assessment = 1;
+  repeated RuleMatch matched_rules = 2;
+  optional int32 risk_score = 3;
+}

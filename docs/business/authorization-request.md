@@ -23,9 +23,9 @@ Validation does not normalize invalid input.
 decline returns `200 OK` and echoes the request identifier.
 
 An approved response contains `requestId` and `decision: APPROVED`. A declined response also
-contains `declineReason`, with one of `INSUFFICIENT_FUNDS`, `FRAUD_REVIEW_REQUIRED`, or
-`HIGH_FRAUD_RISK`. The successful response does not expose assessment details, scores, evidence,
-case data, or ledger data.
+contains `declineReason`; the current connected policy produces `INSUFFICIENT_FUNDS` or
+`HIGH_FRAUD_RISK`. A `REVIEW` assessment does not itself decline the transaction. The successful
+response does not expose assessment details, scores, evidence, case data, or ledger data.
 
 An identical retry while the original request is still processing returns `202 Accepted` with
 `requestId` and `status: PENDING`. Reusing a request identifier with different canonical request
@@ -46,10 +46,12 @@ code `UNKNOWN_CARD_TOKEN`. A mismatch between the EUR request and account curren
 the code, are not authorization decisions, create no ledger entry, and release the claim while it
 is still `PENDING`.
 
-Unexpected technical failures return `500 Internal Server Error` with code
-`AUTHORIZATION_PROCESSING_ERROR`; they are not business decision values. Malformed and technical
-responses omit field errors and never expose internal exception or request details. A technical
-failure after a successful first claim releases that claim only while it remains `PENDING`.
+Unexpected technical failures, including fraud deadline/unavailability/corrupt responses, return
+`500 Internal Server Error` with code `AUTHORIZATION_PROCESSING_ERROR`; they are not business
+decision values. Malformed and technical responses omit field errors and never expose raw gRPC
+status, internal exception, or request details. A technical failure after a successful first claim
+releases that claim only while it remains `PENDING`. Fraud-engine request conflicts return the
+existing HTTP `409 REQUEST_ID_CONFLICT` response and release the new claim.
 
 ## Trusted internal information
 
@@ -69,9 +71,13 @@ This information is trusted platform context used when assessing and authorizing
 
 Fraud processing generates:
 
-- Fraud assessment.
-- Risk score.
-- Triggered-rule evidence.
+- Authoritative categorical fraud assessment.
+- Deterministic synthetic risk score.
+- Matched fraud-rule codes, severities, evidence, and score contributions.
+
+See [fraud-assessment.md](fraud-assessment.md) for the fraud-assessment contract. The score is an
+informational prioritization value, not a probability or authorization-policy input, and it is not
+included in the public HTTP response.
 
 ## Generated authorization result
 
@@ -79,7 +85,8 @@ Authorization processing generates:
 
 - Final decision.
 - Decision reason.
-- Associated fraud-case identifier when applicable.
+
+Case creation is reserved for a future cycle and is not part of this increment.
 
 ## Separation of responsibilities
 
@@ -95,12 +102,9 @@ separately.
 
 ## Demo-only synthetic fixtures
 
-The in-memory fraud adapter recognizes these synthetic identifiers for local demonstrations and
-tests:
-
-- `merchant-review` produces `REVIEW`.
-- `merchant-high-risk` produces `HIGH_RISK`.
-- Any other valid merchant identifier produces `CLEAR`.
+The fraud engine's documented synthetic configuration recognizes `merchant-review` as `REVIEW`
+and `merchant-high-risk` as `HIGH_RISK`. The deterministic in-memory adapter mirrors those values
+only in focused authorization-service tests; it is not the production runtime adapter.
 
 The Cycle 3 PostgreSQL seed contains these synthetic EUR card accounts:
 

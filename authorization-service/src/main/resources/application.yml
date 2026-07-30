@@ -5,3 +5,30 @@ spring:
     password: "${AUTHORIZATION_DB_PASSWORD:transactiq_local}"
   liquibase:
     change-log: "classpath:db/changelog/db.changelog-master.xml"
+  kafka:
+    bootstrap-servers: "${TRANSACTIQ_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}"
+    producer:
+      acks: all
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.ByteArraySerializer
+      properties:
+        enable.idempotence: true
+
+fraud:
+  grpc:
+    client:
+      host: "${TRANSACTIQ_FRAUD_GRPC_HOST:localhost}"
+      port: "${TRANSACTIQ_FRAUD_GRPC_PORT:9090}"
+      deadline: "${TRANSACTIQ_FRAUD_GRPC_DEADLINE:2s}"
+      plaintext: "${TRANSACTIQ_FRAUD_GRPC_PLAINTEXT:true}"
+
+authorization:
+  outbox:
+    publisher:
+      enabled: "${AUTHORIZATION_OUTBOX_PUBLISHER_ENABLED:true}"
+      topic: "transactiq.authorization.completed.v1"
+      batch-size: 50
+      poll-interval: 1s
+      lease-duration: 30s
+      initial-retry-backoff: 1s
+      max-retry-backoff: 1m

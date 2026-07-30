@@ -1,5 +1,6 @@
 package io.github.monssifechadli99.transactiq.authorization.adapter.in.web;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -10,7 +11,7 @@ import io.github.monssifechadli99.transactiq.authorization.application.model.Ide
 import io.github.monssifechadli99.transactiq.authorization.application.port.in.AuthorizationCommand;
 import io.github.monssifechadli99.transactiq.authorization.application.port.out.FraudAssessmentPort;
 import io.github.monssifechadli99.transactiq.authorization.application.port.out.IdempotencyClaimPort;
-import io.github.monssifechadli99.transactiq.authorization.domain.FraudAssessment;
+import io.github.monssifechadli99.transactiq.authorization.domain.FraudAssessmentResult;
 import io.github.monssifechadli99.transactiq.authorization.support.AuthorizationServiceIntegrationTest;
 import java.math.BigDecimal;
 import java.net.URI;
@@ -92,6 +93,7 @@ class AuthorizationIdempotencyHttpIntegrationTest {
         assertEquals(1, fraudAdapter.invocationCount());
         assertEquals(1, ledgerCount(command.requestId()));
         assertEquals(1, reservationCount(command.requestId()));
+        assertEquals(1, outboxCount(command.requestId()));
         assertEquals(new BigDecimal("100.00"), reservedAmount());
     }
 
@@ -101,6 +103,7 @@ class AuthorizationIdempotencyHttpIntegrationTest {
                 COMPLETED_RETRY_ID, "merchant-standard", new BigDecimal("80.00"));
 
         HttpResponse<String> first = post(command);
+        byte[] originalEventPayload = outboxPayload(command.requestId());
         HttpResponse<String> retry = post(command);
 
         assertEquals(200, first.statusCode());
@@ -109,6 +112,8 @@ class AuthorizationIdempotencyHttpIntegrationTest {
         assertEquals(1, fraudAdapter.invocationCount());
         assertEquals(1, ledgerCount(command.requestId()));
         assertEquals(1, reservationCount(command.requestId()));
+        assertEquals(1, outboxCount(command.requestId()));
+        assertArrayEquals(originalEventPayload, outboxPayload(command.requestId()));
         assertEquals(new BigDecimal("80.00"), reservedAmount());
     }
 
@@ -127,6 +132,7 @@ class AuthorizationIdempotencyHttpIntegrationTest {
         assertEquals(0, fraudAdapter.invocationCount());
         assertEquals(0, ledgerCount(command.requestId()));
         assertEquals(0, reservationCount(command.requestId()));
+        assertEquals(0, outboxCount(command.requestId()));
         assertEquals(new BigDecimal("0.00"), reservedAmount());
     }
 
@@ -145,11 +151,12 @@ class AuthorizationIdempotencyHttpIntegrationTest {
         assertEquals(0, fraudAdapter.invocationCount());
         assertEquals(0, ledgerCount(CONFLICT_ID));
         assertEquals(0, reservationCount(CONFLICT_ID));
+        assertEquals(0, outboxCount(CONFLICT_ID));
         assertEquals(new BigDecimal("0.00"), reservedAmount());
     }
 
     @Test
-    void declinedRetryReturnsOriginalDeclineWithoutAnotherLedgerEntry() throws Exception {
+    void reviewRetryReturnsOriginalApprovalWithoutRepeatingFraud() throws Exception {
         AuthorizationCommand command = command(
                 DECLINED_RETRY_ID, "merchant-review", new BigDecimal("75.00"));
 
@@ -159,13 +166,12 @@ class AuthorizationIdempotencyHttpIntegrationTest {
         assertEquals(200, first.statusCode());
         assertEquals(200, retry.statusCode());
         assertEquals(first.body(), retry.body());
-        assertTrue(
-                retry.body().contains("\"declineReason\":\"FRAUD_REVIEW_REQUIRED\""),
-                retry.body());
+        assertTrue(retry.body().contains("\"decision\":\"APPROVED\""), retry.body());
         assertEquals(1, fraudAdapter.invocationCount());
         assertEquals(1, ledgerCount(command.requestId()));
-        assertEquals(0, reservationCount(command.requestId()));
-        assertEquals(new BigDecimal("0.00"), reservedAmount());
+        assertEquals(1, reservationCount(command.requestId()));
+        assertEquals(1, outboxCount(command.requestId()));
+        assertEquals(new BigDecimal("75.00"), reservedAmount());
     }
 
     private HttpResponse<String> post(AuthorizationCommand command) throws Exception {
@@ -229,6 +235,30 @@ class AuthorizationIdempotencyHttpIntegrationTest {
                         """)
                 .param("requestId", requestId)
                 .query(Integer.class)
+                .single();
+    }
+
+    private int outboxCount(UUID requestId) {
+        return jdbcClient.sql(
+                        """
+                        SELECT COUNT(*)
+                        FROM "authorization".authorization_outbox
+                        WHERE request_id = :requestId
+                        """)
+                .param("requestId", requestId)
+                .query(Integer.class)
+                .single();
+    }
+
+    private byte[] outboxPayload(UUID requestId) {
+        return jdbcClient.sql(
+                        """
+                        SELECT payload
+                        FROM "authorization".authorization_outbox
+                        WHERE request_id = :requestId
+                        """)
+                .param("requestId", requestId)
+                .query(byte[].class)
                 .single();
     }
 
@@ -299,7 +329,7 @@ class AuthorizationIdempotencyHttpIntegrationTest {
                 new DeterministicFraudAssessmentAdapter();
 
         @Override
-        public FraudAssessment assess(AuthorizationCommand command) {
+        public FraudAssessmentResult assess(AuthorizationCommand command) {
             invocationCount.incrementAndGet();
             return delegate.assess(command);
         }

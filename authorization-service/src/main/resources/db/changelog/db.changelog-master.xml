@@ -7,4 +7,7 @@
     <include file="changes/001-create-authorization-schema.sql" relativeToChangelogFile="true"/>
     <include file="changes/002-create-authorization-tables.sql" relativeToChangelogFile="true"/>
     <include file="changes/003-seed-synthetic-card-accounts.sql" relativeToChangelogFile="true"/>
+    <include file="changes/004-create-fraud-rule-matches.sql" relativeToChangelogFile="true"/>
+    <include file="changes/005-add-fraud-risk-score.sql" relativeToChangelogFile="true"/>
+    <include file="changes/006-create-authorization-outbox.sql" relativeToChangelogFile="true"/>
 </databaseChangeLog>

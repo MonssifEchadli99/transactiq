@@ -1,0 +1,75 @@
+spring:
+  data:
+    redis:
+      host: localhost
+      port: "${TRANSACTIQ_REDIS_PORT:6380}"
+      connect-timeout: 2s
+      timeout: 2s
+
+fraud:
+  grpc:
+    port: "${FRAUD_ENGINE_GRPC_PORT:9090}"
+  velocity:
+    deduplication-retention: 24h
+  scoring:
+    contributions:
+      - rule-code: AMOUNT_THRESHOLD
+        severity: REVIEW
+        points: 15
+      - rule-code: AMOUNT_THRESHOLD
+        severity: HIGH_RISK
+        points: 70
+      - rule-code: MERCHANT_PROFILE
+        severity: REVIEW
+        points: 15
+      - rule-code: MERCHANT_PROFILE
+        severity: HIGH_RISK
+        points: 75
+      - rule-code: RISKY_MCC
+        severity: REVIEW
+        points: 10
+      - rule-code: RISKY_MCC
+        severity: HIGH_RISK
+        points: 70
+      - rule-code: TRANSACTION_COUNT
+        severity: REVIEW
+        points: 10
+      - rule-code: TRANSACTION_COUNT
+        severity: HIGH_RISK
+        points: 70
+      - rule-code: ROLLING_AMOUNT
+        severity: REVIEW
+        points: 15
+      - rule-code: ROLLING_AMOUNT
+        severity: HIGH_RISK
+        points: 70
+      - rule-code: COUNTRY_SWITCH
+        severity: HIGH_RISK
+        points: 80
+  rules:
+    amount-thresholds:
+      EUR:
+        review: "1000.00"
+        high-risk: "2500.00"
+    merchant-profiles:
+      REVIEW:
+        - merchant-review
+      HIGH_RISK:
+        - merchant-high-risk
+    risky-mcc:
+      REVIEW:
+        - "7995"
+      HIGH_RISK:
+        - "6051"
+    transaction-count:
+      window: 60s
+      review-threshold: 5
+      high-risk-threshold: 10
+    rolling-amount:
+      window: 5m
+      thresholds:
+        EUR:
+          review: "3000.00"
+          high-risk: "5000.00"
+    country-switch:
+      window: 10m

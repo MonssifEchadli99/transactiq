@@ -17,8 +17,6 @@ import io.github.monssifechadli99.transactiq.authorization.application.service.A
 import io.github.monssifechadli99.transactiq.authorization.application.service.AuthorizationCompletionService;
 import io.github.monssifechadli99.transactiq.authorization.domain.AuthorizationOutcome;
 import io.github.monssifechadli99.transactiq.authorization.domain.AuthorizationPolicy;
-import io.github.monssifechadli99.transactiq.authorization.domain.DeclineReason;
-import io.github.monssifechadli99.transactiq.authorization.domain.FraudAssessment;
 import io.github.monssifechadli99.transactiq.authorization.domain.NonFraudCheckResult;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -35,6 +33,7 @@ class AuthorizationInMemoryIntegrationTest {
                 new SameThreadTransactionExecutor(),
                 new DeterministicNonFraudCheckAdapter(),
                 ledger,
+                (command, fraudAssessment, nonFraudCheckResult, outcome) -> {},
                 new AuthorizationPolicy());
         AuthorizationApplicationService service = new AuthorizationApplicationService(
                 new AlwaysClaimedIdempotencyPort(),
@@ -55,13 +54,11 @@ class AuthorizationInMemoryIntegrationTest {
                 AuthorizationProcessingResult.Completed.class,
                 service.authorize(command));
 
-        AuthorizationOutcome.Declined declined = assertInstanceOf(
-                AuthorizationOutcome.Declined.class, result.outcome());
-        assertEquals(DeclineReason.FRAUD_REVIEW_REQUIRED, declined.declineReason());
+        assertInstanceOf(AuthorizationOutcome.Approved.class, result.outcome());
         assertEquals(
                 new LedgerEntry(
                         command,
-                        FraudAssessment.REVIEW,
+                        result.fraudAssessment(),
                         NonFraudCheckResult.PASSED,
                         result.outcome()),
                 ledger.snapshot().getFirst());

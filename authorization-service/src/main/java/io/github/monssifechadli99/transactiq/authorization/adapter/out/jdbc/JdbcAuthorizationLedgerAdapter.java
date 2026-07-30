@@ -3,7 +3,8 @@ package io.github.monssifechadli99.transactiq.authorization.adapter.out.jdbc;
 import io.github.monssifechadli99.transactiq.authorization.application.port.in.AuthorizationCommand;
 import io.github.monssifechadli99.transactiq.authorization.application.port.out.AuthorizationLedgerPort;
 import io.github.monssifechadli99.transactiq.authorization.domain.AuthorizationOutcome;
-import io.github.monssifechadli99.transactiq.authorization.domain.FraudAssessment;
+import io.github.monssifechadli99.transactiq.authorization.domain.FraudAssessmentResult;
+import io.github.monssifechadli99.transactiq.authorization.domain.FraudRuleMatch;
 import io.github.monssifechadli99.transactiq.authorization.domain.NonFraudCheckResult;
 import java.util.Objects;
 import java.util.UUID;
@@ -20,7 +21,7 @@ public final class JdbcAuthorizationLedgerAdapter implements AuthorizationLedger
     @Override
     public void record(
             AuthorizationCommand command,
-            FraudAssessment fraudAssessment,
+            FraudAssessmentResult fraudAssessment,
             NonFraudCheckResult nonFraudCheckResult,
             AuthorizationOutcome outcome) {
         Objects.requireNonNull(command, "command must not be null");
@@ -38,6 +39,7 @@ public final class JdbcAuthorizationLedgerAdapter implements AuthorizationLedger
                     command, fraudAssessment, nonFraudCheckResult, declined);
         }
 
+        insertFraudRuleMatches(command.requestId(), fraudAssessment);
         markRequestCompleted(command.requestId());
     }
 
@@ -78,7 +80,7 @@ public final class JdbcAuthorizationLedgerAdapter implements AuthorizationLedger
 
     private void insertApprovedLedger(
             AuthorizationCommand command,
-            FraudAssessment fraudAssessment,
+            FraudAssessmentResult fraudAssessment,
             NonFraudCheckResult nonFraudCheckResult) {
         int inserted = jdbcClient.sql(
                         """
@@ -87,17 +89,20 @@ public final class JdbcAuthorizationLedgerAdapter implements AuthorizationLedger
                             decision,
                             decline_reason,
                             fraud_assessment,
+                            risk_score,
                             non_fraud_check_result
                         ) VALUES (
                             :requestId,
                             'APPROVED',
                             NULL,
                             :fraudAssessment,
+                            :riskScore,
                             :nonFraudCheckResult
                         )
                         """)
                 .param("requestId", command.requestId())
-                .param("fraudAssessment", fraudAssessment.name())
+                .param("fraudAssessment", fraudAssessment.assessment().name())
+                .param("riskScore", fraudAssessment.riskScore())
                 .param("nonFraudCheckResult", nonFraudCheckResult.name())
                 .update();
         requireExactlyOne(inserted, "insert approved ledger entry");
@@ -105,7 +110,7 @@ public final class JdbcAuthorizationLedgerAdapter implements AuthorizationLedger
 
     private void insertDeclinedLedger(
             AuthorizationCommand command,
-            FraudAssessment fraudAssessment,
+            FraudAssessmentResult fraudAssessment,
             NonFraudCheckResult nonFraudCheckResult,
             AuthorizationOutcome.Declined declined) {
         int inserted = jdbcClient.sql(
@@ -115,21 +120,59 @@ public final class JdbcAuthorizationLedgerAdapter implements AuthorizationLedger
                             decision,
                             decline_reason,
                             fraud_assessment,
+                            risk_score,
                             non_fraud_check_result
                         ) VALUES (
                             :requestId,
                             'DECLINED',
                             :declineReason,
                             :fraudAssessment,
+                            :riskScore,
                             :nonFraudCheckResult
                         )
                         """)
                 .param("requestId", command.requestId())
                 .param("declineReason", declined.declineReason().name())
-                .param("fraudAssessment", fraudAssessment.name())
+                .param("fraudAssessment", fraudAssessment.assessment().name())
+                .param("riskScore", fraudAssessment.riskScore())
                 .param("nonFraudCheckResult", nonFraudCheckResult.name())
                 .update();
         requireExactlyOne(inserted, "insert declined ledger entry");
+    }
+
+    private void insertFraudRuleMatches(
+            UUID requestId, FraudAssessmentResult fraudAssessment) {
+        for (int matchOrder = 0;
+                matchOrder < fraudAssessment.matchedRules().size();
+                matchOrder++) {
+            FraudRuleMatch match = fraudAssessment.matchedRules().get(matchOrder);
+            int inserted = jdbcClient.sql(
+                            """
+                            INSERT INTO "authorization".fraud_rule_matches (
+                                request_id,
+                                match_order,
+                                rule_code,
+                                severity,
+                                evidence,
+                                score_contribution
+                            ) VALUES (
+                                :requestId,
+                                :matchOrder,
+                                :ruleCode,
+                                :severity,
+                                :evidence,
+                                :scoreContribution
+                            )
+                            """)
+                    .param("requestId", requestId)
+                    .param("matchOrder", matchOrder)
+                    .param("ruleCode", match.ruleCode())
+                    .param("severity", match.severity().name())
+                    .param("evidence", match.evidence())
+                    .param("scoreContribution", match.scoreContribution())
+                    .update();
+            requireExactlyOne(inserted, "insert fraud rule match");
+        }
     }
 
     private void insertReservation(AuthorizationCommand command, UUID accountId) {

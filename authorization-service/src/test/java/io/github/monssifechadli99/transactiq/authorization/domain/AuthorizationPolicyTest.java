@@ -37,16 +37,14 @@ class AuthorizationPolicyTest {
     }
 
     @Test
-    void declinesForFraudReviewWhenNonFraudChecksPass() {
+    void approvesFraudReviewWhenNonFraudChecksPass() {
         AuthorizationOutcome outcome = policy.decide(
                 FraudAssessment.REVIEW,
                 NonFraudCheckResult.PASSED);
 
-        AuthorizationOutcome.Declined declined =
-                assertInstanceOf(AuthorizationOutcome.Declined.class, outcome);
-        assertEquals(AuthorizationDecision.DECLINED, declined.decision());
-        assertEquals(DeclineReason.FRAUD_REVIEW_REQUIRED, declined.declineReason());
-        assertTrue(declined.fraudCaseRequired());
+        assertInstanceOf(AuthorizationOutcome.Approved.class, outcome);
+        assertEquals(AuthorizationDecision.APPROVED, outcome.decision());
+        assertTrue(outcome.fraudCaseRequired());
     }
 
     @Test

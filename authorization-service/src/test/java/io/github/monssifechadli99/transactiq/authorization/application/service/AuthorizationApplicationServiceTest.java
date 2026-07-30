@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.monssifechadli99.transactiq.authorization.application.model.AuthorizationChannel;
 import io.github.monssifechadli99.transactiq.authorization.application.model.AuthorizationProcessingResult;
+import io.github.monssifechadli99.transactiq.authorization.application.model.FraudAssessmentConflictException;
 import io.github.monssifechadli99.transactiq.authorization.application.model.IdempotencyClaimResult;
 import io.github.monssifechadli99.transactiq.authorization.application.model.PreAuthorizationRejectionException;
 import io.github.monssifechadli99.transactiq.authorization.application.port.in.AuthorizationCommand;
@@ -20,6 +21,9 @@ import io.github.monssifechadli99.transactiq.authorization.domain.AuthorizationO
 import io.github.monssifechadli99.transactiq.authorization.domain.AuthorizationPolicy;
 import io.github.monssifechadli99.transactiq.authorization.domain.DeclineReason;
 import io.github.monssifechadli99.transactiq.authorization.domain.FraudAssessment;
+import io.github.monssifechadli99.transactiq.authorization.domain.FraudAssessmentResult;
+import io.github.monssifechadli99.transactiq.authorization.domain.FraudRuleMatch;
+import io.github.monssifechadli99.transactiq.authorization.domain.FraudRuleSeverity;
 import io.github.monssifechadli99.transactiq.authorization.domain.NonFraudCheckResult;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -67,7 +71,9 @@ class AuthorizationApplicationServiceTest {
         AuthorizationOutcome stored = new AuthorizationOutcome.Declined(
                 DeclineReason.FRAUD_REVIEW_REQUIRED, true);
         TestFixture fixture = fixture(
-                new IdempotencyClaimResult.Completed(stored),
+                new IdempotencyClaimResult.Completed(
+                        stored,
+                        fraudResult(FraudAssessment.REVIEW)),
                 FraudAssessment.CLEAR,
                 NonFraudCheckResult.PASSED);
 
@@ -152,6 +158,25 @@ class AuthorizationApplicationServiceTest {
     }
 
     @Test
+    void fraudRequestConflictReleasesPendingClaimAndReturnsConflict() {
+        TestFixture fixture = fixture(
+                new IdempotencyClaimResult.Claimed(),
+                FraudAssessment.CLEAR,
+                NonFraudCheckResult.PASSED);
+        fixture.fraud().failWith(new FraudAssessmentConflictException());
+
+        AuthorizationProcessingResult.Conflict result = assertInstanceOf(
+                AuthorizationProcessingResult.Conflict.class,
+                fixture.service().authorize(COMMAND));
+
+        assertEquals(COMMAND.requestId(), result.requestId());
+        assertEquals(1, fixture.fraud().invocationCount());
+        assertEquals(1, fixture.idempotency().releaseCount());
+        assertEquals(0, fixture.nonFraud().invocationCount());
+        assertTrue(fixture.ledger().records().isEmpty());
+    }
+
+    @Test
     void releaseFailureIsSuppressedOnOriginalProcessingFailure() {
         TestFixture fixture = fixture(
                 new IdempotencyClaimResult.Claimed(),
@@ -183,6 +208,7 @@ class AuthorizationApplicationServiceTest {
                 transactionExecutor,
                 nonFraud,
                 ledger,
+                (command, assessment, nonFraudResult, outcome) -> {},
                 new AuthorizationPolicy());
         AuthorizationApplicationService service = new AuthorizationApplicationService(
                 idempotency, fraud, completionService);
@@ -251,16 +277,16 @@ class AuthorizationApplicationServiceTest {
 
     private static final class FakeFraudAssessmentPort implements FraudAssessmentPort {
 
-        private final FraudAssessment result;
+        private final FraudAssessmentResult result;
         private RuntimeException failure;
         private int invocationCount;
 
         private FakeFraudAssessmentPort(FraudAssessment result) {
-            this.result = result;
+            this.result = fraudResult(result);
         }
 
         @Override
-        public FraudAssessment assess(AuthorizationCommand command) {
+        public FraudAssessmentResult assess(AuthorizationCommand command) {
             invocationCount++;
             if (failure != null) {
                 throw failure;
@@ -275,6 +301,28 @@ class AuthorizationApplicationServiceTest {
         private int invocationCount() {
             return invocationCount;
         }
+    }
+
+    private static FraudAssessmentResult fraudResult(FraudAssessment assessment) {
+        return switch (assessment) {
+            case CLEAR -> FraudAssessmentResult.clear();
+            case REVIEW -> new FraudAssessmentResult(
+                    FraudAssessment.REVIEW,
+                    15,
+                    List.of(new FraudRuleMatch(
+                            "TEST_REVIEW",
+                            FraudRuleSeverity.REVIEW,
+                            "Synthetic review evidence",
+                            15)));
+            case HIGH_RISK -> new FraudAssessmentResult(
+                    FraudAssessment.HIGH_RISK,
+                    70,
+                    List.of(new FraudRuleMatch(
+                            "TEST_HIGH_RISK",
+                            FraudRuleSeverity.HIGH_RISK,
+                            "Synthetic high-risk evidence",
+                            70)));
+        };
     }
 
     private static final class FakeNonFraudCheckPort implements NonFraudCheckPort {
@@ -312,7 +360,7 @@ class AuthorizationApplicationServiceTest {
         @Override
         public void record(
                 AuthorizationCommand command,
-                FraudAssessment fraudAssessment,
+                FraudAssessmentResult fraudAssessment,
                 NonFraudCheckResult nonFraudCheckResult,
                 AuthorizationOutcome outcome) {
             records.add(outcome);

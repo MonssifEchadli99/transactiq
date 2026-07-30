@@ -18,10 +18,8 @@ public final class AuthorizationPolicy {
         }
 
         return switch (fraudAssessment) {
-            case CLEAR -> new AuthorizationOutcome.Approved();
-            case REVIEW -> new AuthorizationOutcome.Declined(
-                    DeclineReason.FRAUD_REVIEW_REQUIRED,
-                    true);
+            case CLEAR -> new AuthorizationOutcome.Approved(false);
+            case REVIEW -> new AuthorizationOutcome.Approved(true);
             case HIGH_RISK -> new AuthorizationOutcome.Declined(
                     DeclineReason.HIGH_FRAUD_RISK,
                     true);

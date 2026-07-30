@@ -45,9 +45,11 @@ class AuthorizationSchemaIntegrationTest {
         assertEquals(
                 List.of(
                         "authorization_ledger",
+                        "authorization_outbox",
                         "authorization_requests",
                         "balance_reservations",
-                        "card_accounts"),
+                        "card_accounts",
+                        "fraud_rule_matches"),
                 tables);
 
         List<String> nullableColumns = jdbcTemplate.queryForList(
@@ -62,6 +64,10 @@ class AuthorizationSchemaIntegrationTest {
         assertEquals(
                 List.of(
                         "authorization_ledger.decline_reason",
+                        "authorization_outbox.published_at",
+                        "authorization_outbox.lease_token",
+                        "authorization_outbox.lease_until",
+                        "authorization_outbox.last_error_code",
                         "authorization_requests.completed_at"),
                 nullableColumns);
 
@@ -80,6 +86,15 @@ class AuthorizationSchemaIntegrationTest {
                 List.of(
                         "ck_authorization_ledger_decision",
                         "ck_authorization_ledger_decline_reason",
+                        "ck_authorization_ledger_risk_score",
+                        "ck_authorization_outbox_attempt_count_non_negative",
+                        "ck_authorization_outbox_event_type_non_blank",
+                        "ck_authorization_outbox_event_version_positive",
+                        "ck_authorization_outbox_last_error_code_non_blank",
+                        "ck_authorization_outbox_partition_key_sha256",
+                        "ck_authorization_outbox_payload_non_empty",
+                        "ck_authorization_outbox_publication_state",
+                        "ck_authorization_outbox_state_metadata",
                         "ck_authorization_requests_completion",
                         "ck_authorization_requests_status",
                         "ck_balance_reservations_amount_positive",
@@ -87,13 +102,23 @@ class AuthorizationSchemaIntegrationTest {
                         "ck_card_accounts_posted_balance_non_negative",
                         "ck_card_accounts_reserved_amount_non_negative",
                         "ck_card_accounts_reserved_amount_within_balance",
+                        "ck_fraud_rule_matches_evidence_non_blank",
+                        "ck_fraud_rule_matches_order_non_negative",
+                        "ck_fraud_rule_matches_rule_code_non_blank",
+                        "ck_fraud_rule_matches_score_contribution",
+                        "ck_fraud_rule_matches_severity",
                         "fk_authorization_ledger_request",
+                        "fk_authorization_outbox_ledger",
                         "fk_balance_reservations_account",
                         "fk_balance_reservations_request",
+                        "fk_fraud_rule_matches_ledger",
                         "pk_authorization_ledger",
+                        "pk_authorization_outbox",
                         "pk_authorization_requests",
                         "pk_balance_reservations",
                         "pk_card_accounts",
+                        "pk_fraud_rule_matches",
+                        "uk_authorization_outbox_request_event_type",
                         "uk_balance_reservations_request",
                         "uk_card_accounts_card_token"),
                 constraints);
@@ -176,6 +201,35 @@ class AuthorizationSchemaIntegrationTest {
         assertThrows(
                 DataIntegrityViolationException.class,
                 () -> insertLedger(UUID.randomUUID(), "APPROVED", null));
+    }
+
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {-1, 101})
+    void rejectsOutOfRangeFraudRiskScore(int riskScore) {
+        UUID requestId = UUID.randomUUID();
+        insertAuthorizationRequest(requestId, "COMPLETED", COMPLETED_AT);
+
+        assertThrows(
+                DataIntegrityViolationException.class,
+                () -> insertLedger(requestId, "APPROVED", null, riskScore));
+    }
+
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {0, 101})
+    void rejectsOutOfRangeFraudScoreContribution(int contribution) {
+        UUID requestId = createApprovedLedgerEntry();
+
+        assertThrows(
+                DataIntegrityViolationException.class,
+                () -> jdbcTemplate.update(
+                        """
+                        INSERT INTO "authorization".fraud_rule_matches (
+                            request_id, match_order, rule_code, severity, evidence,
+                            score_contribution
+                        ) VALUES (?, 0, 'TEST_RULE', 'REVIEW', 'Synthetic evidence', ?)
+                        """,
+                        requestId,
+                        contribution));
     }
 
     @Test
@@ -271,6 +325,11 @@ class AuthorizationSchemaIntegrationTest {
     }
 
     private void insertLedger(UUID requestId, String decision, String declineReason) {
+        insertLedger(requestId, decision, declineReason, 0);
+    }
+
+    private void insertLedger(
+            UUID requestId, String decision, String declineReason, int riskScore) {
         jdbcTemplate.update(
                 """
                 INSERT INTO "authorization".authorization_ledger (
@@ -278,12 +337,14 @@ class AuthorizationSchemaIntegrationTest {
                     decision,
                     decline_reason,
                     fraud_assessment,
+                    risk_score,
                     non_fraud_check_result
-                ) VALUES (?, ?, ?, 'CLEAR', 'PASSED')
+                ) VALUES (?, ?, ?, 'CLEAR', ?, 'PASSED')
                 """,
                 requestId,
                 decision,
-                declineReason);
+                declineReason,
+                riskScore);
     }
 
     private void insertReservation(

@@ -23,7 +23,7 @@ class DeterministicFraudAssessmentAdapterTest {
         "merchant-standard, CLEAR"
     })
     void mapsSyntheticMerchantId(String merchantId, FraudAssessment expected) {
-        assertEquals(expected, adapter.assess(command(merchantId)));
+        assertEquals(expected, adapter.assess(command(merchantId)).assessment());
     }
 
     private static AuthorizationCommand command(String merchantId) {

@@ -110,7 +110,21 @@ class JdbcIdempotencyClaimAdapterIntegrationTest {
 
         assertFalse(idempotencyClaimPort.releasePending(command.requestId()));
         Completed completed = assertInstanceOf(Completed.class, claim(command));
-        assertEquals(new AuthorizationOutcome.Approved(), completed.outcome());
+        assertEquals(new AuthorizationOutcome.Approved(false), completed.outcome());
+        assertEquals(0, completed.fraudAssessment().riskScore());
+    }
+
+    @Test
+    void completedReviewApprovalRetryPreservesFraudCaseRequirement() {
+        AuthorizationCommand command = standardCommand(
+                UUID.fromString("20000000-0000-4000-8000-000000000009"));
+        assertInstanceOf(Claimed.class, claim(command));
+        completeApprovedForReview(command.requestId());
+
+        Completed completed = assertInstanceOf(Completed.class, claim(command));
+        assertEquals(new AuthorizationOutcome.Approved(true), completed.outcome());
+        assertEquals(15, completed.fraudAssessment().riskScore());
+        assertEquals(15, completed.fraudAssessment().matchedRules().getFirst().scoreContribution());
     }
 
     @Test
@@ -126,6 +140,8 @@ class JdbcIdempotencyClaimAdapterIntegrationTest {
                         DeclineReason.FRAUD_REVIEW_REQUIRED,
                         true),
                 completed.outcome());
+        assertEquals(15, completed.fraudAssessment().riskScore());
+        assertEquals(15, completed.fraudAssessment().matchedRules().getFirst().scoreContribution());
     }
 
     @ParameterizedTest(name = "changed {0} returns conflict")
@@ -209,7 +225,8 @@ class JdbcIdempotencyClaimAdapterIntegrationTest {
 
     private IdempotencyClaimResult claim(AuthorizationCommand command) {
         requestIds.add(command.requestId());
-        return idempotencyClaimPort.claim(command);
+        return idempotencyClaimPort.
+                claim(command);
     }
 
     private PersistedRequest persistedRequest(UUID requestId) {
@@ -264,8 +281,37 @@ class JdbcIdempotencyClaimAdapterIntegrationTest {
                             request_id,
                             decision,
                             fraud_assessment,
+                            risk_score,
                             non_fraud_check_result
-                        ) VALUES (:requestId, 'APPROVED', 'CLEAR', 'PASSED')
+                        ) VALUES (:requestId, 'APPROVED', 'CLEAR', 0, 'PASSED')
+                        """)
+                .param("requestId", requestId)
+                .update();
+        markCompleted(requestId);
+    }
+
+    private void completeApprovedForReview(UUID requestId) {
+        jdbcClient.sql(
+                        """
+                        INSERT INTO "authorization".authorization_ledger (
+                            request_id,
+                            decision,
+                            fraud_assessment,
+                            risk_score,
+                            non_fraud_check_result
+                        ) VALUES (:requestId, 'APPROVED', 'REVIEW', 15, 'PASSED')
+                        """)
+                .param("requestId", requestId)
+                .update();
+        jdbcClient.sql(
+                        """
+                        INSERT INTO "authorization".fraud_rule_matches (
+                            request_id, match_order, rule_code, severity, evidence,
+                            score_contribution
+                        ) VALUES (
+                            :requestId, 0, 'TEST_REVIEW', 'REVIEW',
+                            'Synthetic review evidence', 15
+                        )
                         """)
                 .param("requestId", requestId)
                 .update();
@@ -280,13 +326,27 @@ class JdbcIdempotencyClaimAdapterIntegrationTest {
                             decision,
                             decline_reason,
                             fraud_assessment,
+                            risk_score,
                             non_fraud_check_result
                         ) VALUES (
                             :requestId,
                             'DECLINED',
                             'FRAUD_REVIEW_REQUIRED',
                             'REVIEW',
+                            15,
                             'PASSED'
+                        )
+                        """)
+                .param("requestId", requestId)
+                .update();
+        jdbcClient.sql(
+                        """
+                        INSERT INTO "authorization".fraud_rule_matches (
+                            request_id, match_order, rule_code, severity, evidence,
+                            score_contribution
+                        ) VALUES (
+                            :requestId, 0, 'TEST_REVIEW', 'REVIEW',
+                            'Synthetic review evidence', 15
                         )
                         """)
                 .param("requestId", requestId)

@@ -13,7 +13,8 @@ stores the complete canonical request payload and a deterministic SHA-256 finger
 For a repeated `requestId`:
 
 - The same canonical payload returns `PENDING` while processing is incomplete.
-- The same canonical payload returns `COMPLETED` with the stored authorization outcome after
+- The same canonical payload returns `COMPLETED` with the stored authorization outcome, original
+  fraud assessment, original score, and all ordered matched-rule details and contributions after
   completion.
 - A different canonical payload returns `CONFLICT`.
 
@@ -28,12 +29,18 @@ the component does not use JVM-only locking.
 
 ## Atomic persistent completion
 
-Completion requires an existing `PENDING` claim. Inside one database transaction, the component
-locks the card account, performs the available-funds check, applies the authorization policy, and
-persists the exact fraud assessment, non-fraud result, decision, and decline reason. Approvals also
-reserve the authorized amount; declines leave the balance unchanged. The request becomes
-`COMPLETED` only after all expected writes succeed, and any technical failure rolls back the whole
-attempt.
+Completion requires an existing `PENDING` claim. After the synchronous fraud call, one database
+transaction locks the card account, performs the available-funds check, applies the authorization
+policy, and persists the exact fraud assessment and score, every ordered
+code/severity/evidence/contribution match, non-fraud result, decision, and decline reason. Approvals
+also reserve the authorized amount;
+declines leave the balance unchanged. The request becomes `COMPLETED` only after all expected
+writes succeed, and any technical failure rolls back the whole attempt.
+
+That transaction also inserts exactly one immutable serialized authorization-completed event,
+uniquely constrained by request and event type. A completed identical retry neither rebuilds nor
+updates the original event, its identifier, or its occurrence time. Pending and conflicting
+duplicates create no event.
 
 Account-row locking prevents concurrent requests from approving against the same available funds.
 The completion component is invoked only after the live orchestrator receives `CLAIMED`.
@@ -46,12 +53,17 @@ The completion component is invoked only after the live orchestrator receives `C
   workflow result, not an exception.
 - `CONFLICT` returns HTTP `409` with code `REQUEST_ID_CONFLICT`; it is an expected workflow result,
   not an exception.
-- `CLAIMED` runs fraud assessment and atomic completion.
+- `CLAIMED` performs exactly one fraud RPC with no client retry, then runs atomic completion.
 
 If pre-authorization validation inside completion or a technical processing step fails, the
 orchestrator deletes the claim only when it is still `PENDING`, then propagates the original
 failure. This preserves the existing HTTP `400` or generic `500` response and permits a later retry
 to claim the identifier again.
+
+If the engine processed an attempt but the response was lost, authorization-service releases its
+pending claim. A later retry makes a new single RPC with the same `requestId`; fraud-engine returns
+its deduplicated snapshot and does not add another velocity observation. Engine
+`FAILED_PRECONDITION` becomes the existing conflict response and releases the authorization claim.
 
 ## Same requestId with identical request data
 
@@ -59,25 +71,27 @@ to claim the identifier again.
 - If the original request is `PENDING`, do not start another authorization workflow.
 - If the original request is completed, return its recorded outcome.
 - Never apply a balance operation twice.
-- Never create duplicate fraud cases.
+- Do not call fraud-engine again.
+- Do not create or republish a second outbox event.
 
-Example: Synthetic request `AUTH-10001` was declined and associated with fraud case `CASE-9001`. An identical duplicate returns the same decline and `CASE-9001`; it does not repeat processing or create another case.
+Example: synthetic request `d5e75b60-a263-4f76-b5d0-a35f1a09bc67` completed with a `REVIEW`
+assessment and an approval. An identical duplicate returns the same approval and retains the
+original assessment, score, and matched-rule contributions without another fraud call,
+recomputation, or reservation.
 
 ## Same requestId with different request data
 
 - Reject the later request with `REQUEST_ID_CONFLICT`.
 - Do not perform fraud assessment.
-- Do not create a fraud case.
 
 `REJECTED` occurs before the request is accepted into the normal authorization lifecycle. It is not an additional transition from `PENDING`.
 
 Example: Synthetic request `AUTH-10001` is first submitted for EUR 75 and later reused for EUR 200. The later request is rejected with `REQUEST_ID_CONFLICT` before authorization processing begins.
 
-## Late result after timeout
+## Lost or late fraud response
 
-- Keep the merchant-facing `TIMED_OUT` outcome unchanged.
-- Do not convert it later into `APPROVED` or `DECLINED`.
-- Record the late result for audit and observability.
-- Do not automatically create a fraud case from the late result in V1.
-
-Automated retry behavior remains outside V1 and will be defined separately.
+A fraud deadline is a technical HTTP `500`, not a stored authorization decision. No ledger or
+reservation is written, and the pending authorization claim is released. If a fraud response
+arrives after the client deadline, it cannot complete the released authorization execution. A
+caller retry starts a newly claimed execution while fraud-engine deduplication prevents the same
+request from adding another velocity observation.

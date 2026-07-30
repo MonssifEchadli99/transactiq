@@ -10,6 +10,9 @@ import io.github.monssifechadli99.transactiq.authorization.application.port.in.A
 import io.github.monssifechadli99.transactiq.authorization.domain.AuthorizationOutcome;
 import io.github.monssifechadli99.transactiq.authorization.domain.DeclineReason;
 import io.github.monssifechadli99.transactiq.authorization.domain.FraudAssessment;
+import io.github.monssifechadli99.transactiq.authorization.domain.FraudAssessmentResult;
+import io.github.monssifechadli99.transactiq.authorization.domain.FraudRuleMatch;
+import io.github.monssifechadli99.transactiq.authorization.domain.FraudRuleSeverity;
 import io.github.monssifechadli99.transactiq.authorization.domain.NonFraudCheckResult;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -28,18 +31,18 @@ class InMemoryAuthorizationLedgerAdapterTest {
                 UUID.fromString("d5e75b60-a263-4f76-b5d0-a35f1a09bc67"));
         AuthorizationCommand declinedCommand = command(
                 UUID.fromString("7ca1739b-1eca-4330-ae0c-f68826e10256"));
-        AuthorizationOutcome approved = new AuthorizationOutcome.Approved();
+        AuthorizationOutcome approved = new AuthorizationOutcome.Approved(false);
         AuthorizationOutcome declined =
                 new AuthorizationOutcome.Declined(DeclineReason.HIGH_FRAUD_RISK, true);
 
         adapter.record(
                 approvedCommand,
-                FraudAssessment.CLEAR,
+                FraudAssessmentResult.clear(),
                 NonFraudCheckResult.PASSED,
                 approved);
         adapter.record(
                 declinedCommand,
-                FraudAssessment.HIGH_RISK,
+                highRiskAssessment(),
                 NonFraudCheckResult.PASSED,
                 declined);
 
@@ -48,12 +51,12 @@ class InMemoryAuthorizationLedgerAdapterTest {
                 List.of(
                         new LedgerEntry(
                                 approvedCommand,
-                                FraudAssessment.CLEAR,
+                                FraudAssessmentResult.clear(),
                                 NonFraudCheckResult.PASSED,
                                 approved),
                         new LedgerEntry(
                                 declinedCommand,
-                                FraudAssessment.HIGH_RISK,
+                                highRiskAssessment(),
                                 NonFraudCheckResult.PASSED,
                                 declined)),
                 snapshot);
@@ -63,25 +66,36 @@ class InMemoryAuthorizationLedgerAdapterTest {
                 UnsupportedOperationException.class,
                 () -> snapshot.add(new LedgerEntry(
                         approvedCommand,
-                        FraudAssessment.CLEAR,
+                        FraudAssessmentResult.clear(),
                         NonFraudCheckResult.PASSED,
                         approved)));
+    }
+
+    private static FraudAssessmentResult highRiskAssessment() {
+        return new FraudAssessmentResult(
+                FraudAssessment.HIGH_RISK,
+                70,
+                List.of(new FraudRuleMatch(
+                        "TEST_HIGH_RISK",
+                        FraudRuleSeverity.HIGH_RISK,
+                        "Synthetic high-risk evidence",
+                        70)));
     }
 
     @Test
     void preservesSeparateEntriesForDuplicateRequestIds() {
         UUID requestId = UUID.fromString("d5e75b60-a263-4f76-b5d0-a35f1a09bc67");
         AuthorizationCommand command = command(requestId);
-        AuthorizationOutcome outcome = new AuthorizationOutcome.Approved();
+        AuthorizationOutcome outcome = new AuthorizationOutcome.Approved(false);
 
         adapter.record(
                 command,
-                FraudAssessment.CLEAR,
+                FraudAssessmentResult.clear(),
                 NonFraudCheckResult.PASSED,
                 outcome);
         adapter.record(
                 command,
-                FraudAssessment.CLEAR,
+                FraudAssessmentResult.clear(),
                 NonFraudCheckResult.PASSED,
                 outcome);
 

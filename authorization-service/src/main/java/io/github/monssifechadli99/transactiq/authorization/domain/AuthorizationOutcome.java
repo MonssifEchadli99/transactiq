@@ -9,16 +9,11 @@ public sealed interface AuthorizationOutcome
 
     boolean fraudCaseRequired();
 
-    record Approved() implements AuthorizationOutcome {
+    record Approved(boolean fraudCaseRequired) implements AuthorizationOutcome {
 
         @Override
         public AuthorizationDecision decision() {
             return AuthorizationDecision.APPROVED;
-        }
-
-        @Override
-        public boolean fraudCaseRequired() {
-            return false;
         }
     }
 

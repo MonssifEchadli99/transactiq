@@ -1,13 +1,14 @@
 package io.github.monssifechadli99.transactiq.authorization.application.service;
 
 import io.github.monssifechadli99.transactiq.authorization.application.model.AuthorizationProcessingResult;
+import io.github.monssifechadli99.transactiq.authorization.application.model.FraudAssessmentConflictException;
 import io.github.monssifechadli99.transactiq.authorization.application.model.IdempotencyClaimResult;
 import io.github.monssifechadli99.transactiq.authorization.application.port.in.AuthorizationCommand;
 import io.github.monssifechadli99.transactiq.authorization.application.port.in.AuthorizeTransactionUseCase;
 import io.github.monssifechadli99.transactiq.authorization.application.port.out.FraudAssessmentPort;
 import io.github.monssifechadli99.transactiq.authorization.application.port.out.IdempotencyClaimPort;
 import io.github.monssifechadli99.transactiq.authorization.domain.AuthorizationOutcome;
-import io.github.monssifechadli99.transactiq.authorization.domain.FraudAssessment;
+import io.github.monssifechadli99.transactiq.authorization.domain.FraudAssessmentResult;
 import java.util.Objects;
 
 public final class AuthorizationApplicationService implements AuthorizeTransactionUseCase {
@@ -36,7 +37,8 @@ public final class AuthorizationApplicationService implements AuthorizeTransacti
 
         return switch (claimResult) {
             case IdempotencyClaimResult.Completed completed ->
-                    new AuthorizationProcessingResult.Completed(completed.outcome());
+                    new AuthorizationProcessingResult.Completed(
+                            completed.outcome(), completed.fraudAssessment());
             case IdempotencyClaimResult.Pending pending ->
                     new AuthorizationProcessingResult.Pending(command.requestId());
             case IdempotencyClaimResult.Conflict conflict ->
@@ -47,13 +49,22 @@ public final class AuthorizationApplicationService implements AuthorizeTransacti
 
     private AuthorizationProcessingResult completeClaimedRequest(AuthorizationCommand command) {
         try {
-            FraudAssessment fraudAssessment = fraudAssessmentPort.assess(command);
+            FraudAssessmentResult fraudAssessment = fraudAssessmentPort.assess(command);
             AuthorizationOutcome outcome = authorizationCompletionService.complete(
                     command, fraudAssessment);
-            return new AuthorizationProcessingResult.Completed(outcome);
+            return new AuthorizationProcessingResult.Completed(outcome, fraudAssessment);
+        } catch (FraudAssessmentConflictException conflict) {
+            releaseClaim(command);
+            return new AuthorizationProcessingResult.Conflict(command.requestId());
         } catch (RuntimeException | Error failure) {
             releaseClaimPreserving(command, failure);
             throw failure;
+        }
+    }
+
+    private void releaseClaim(AuthorizationCommand command) {
+        if (!idempotencyClaimPort.releasePending(command.requestId())) {
+            throw new IllegalStateException("Pending authorization claim could not be released");
         }
     }
 

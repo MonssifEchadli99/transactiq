@@ -3,7 +3,7 @@ package io.github.monssifechadli99.transactiq.authorization.adapter.out.memory;
 import io.github.monssifechadli99.transactiq.authorization.application.port.in.AuthorizationCommand;
 import io.github.monssifechadli99.transactiq.authorization.application.port.out.AuthorizationLedgerPort;
 import io.github.monssifechadli99.transactiq.authorization.domain.AuthorizationOutcome;
-import io.github.monssifechadli99.transactiq.authorization.domain.FraudAssessment;
+import io.github.monssifechadli99.transactiq.authorization.domain.FraudAssessmentResult;
 import io.github.monssifechadli99.transactiq.authorization.domain.NonFraudCheckResult;
 import java.util.List;
 import java.util.Objects;
@@ -17,7 +17,7 @@ public final class InMemoryAuthorizationLedgerAdapter implements AuthorizationLe
     @Override
     public void record(
             AuthorizationCommand command,
-            FraudAssessment fraudAssessment,
+            FraudAssessmentResult fraudAssessment,
             NonFraudCheckResult nonFraudCheckResult,
             AuthorizationOutcome outcome) {
         entries.add(new LedgerEntry(
@@ -30,7 +30,7 @@ public final class InMemoryAuthorizationLedgerAdapter implements AuthorizationLe
 
     public record LedgerEntry(
             AuthorizationCommand command,
-            FraudAssessment fraudAssessment,
+            FraudAssessmentResult fraudAssessment,
             NonFraudCheckResult nonFraudCheckResult,
             AuthorizationOutcome outcome) {
 
