@@ -1,6 +1,6 @@
 # Fraud Case Management
 
-## Increment 1 boundary
+## Case creation boundary
 
 A fraud case is an immutable investigation snapshot created from a completed-authorization event.
 It never changes the authorization decision, decline reason, balance, reservation, fraud
@@ -14,9 +14,10 @@ the versioned event contract and never reads authorization-service tables.
 - `CLEAR` requires `caseRequired=false`; the valid event is acknowledged without a case.
 - `REVIEW` and `HIGH_RISK` require `caseRequired=true`; one case is created.
 - Any inconsistent combination is an invalid contract and is not acknowledged.
-- A new case has generated `caseId`, status `NEW`, and no assignee.
-- The defined lifecycle is `NEW` → `IN_REVIEW` → `RESOLVED`, but this increment implements no
-  transition or assignment operation.
+- A new case has generated `caseId`, status `NEW`, version `0`, no assignee, and matching creation
+  and update timestamps.
+- The defined lifecycle is `NEW` → `IN_REVIEW` → `RESOLVED`; Increment 3 implements only
+  `NEW` → `IN_REVIEW` through self-claim.
 - One suspicious authorization produces one case. There is no grouping and no priority field.
 
 The case preserves the complete normalized event snapshot: source identities and exact-byte hash,
@@ -42,8 +43,26 @@ The DLT keeps the original key/value bytes, partition, and non-recovery headers.
 source-coordinate recovery ID, category, exception class, UTC recovery time, processing attempt,
 consumer group, and payload SHA-256. It intentionally excludes exception messages and stack traces.
 
+## Analyst queue, details, and self-claim
+
+The queue is ordered by `createdAt ASC, caseId ASC` and uses an opaque keyset cursor. Status and
+assignment filters are supported. Pagination is deterministic for an unchanged matching set, but
+separate HTTP requests do not share snapshot isolation; a concurrent claim can move a case into or
+out of a filter between pages.
+
+Case details expose the complete immutable authorization/fraud snapshot, pseudonymous card
+fingerprint, and rule matches in stored order. They never expose a raw card token or Kafka payload.
+
+The only mutable operation is self-claim. A successful claim atomically assigns the analyst,
+changes `NEW` to `IN_REVIEW`, increments the optimistic version, updates `updatedAt`, and appends
+one immutable `CLAIMED` lifecycle event. The same analyst can safely retry with the pre-claim
+version without another mutation or audit event. Another analyst receives a conflict.
+
+`X-Analyst-Id` is caller-supplied development identity. It is not authentication, authorization,
+or evidence of a real analyst account.
+
 ## Explicit exclusions
 
-This increment has no HTTP API, gateway route, assignment operation, lifecycle transition,
-resolution, notes, transaction action, refund, case grouping, priority, OpenSearch projection,
-DLT replay tooling, or AI/RAG behavior.
+This increment has no resolution, reopen, release, reassignment, notes, history endpoint, real
+identity/security, gateway route, lifecycle Kafka event, transaction action, refund, case grouping,
+priority, OpenSearch projection, DLT replay tooling, or AI/RAG behavior.

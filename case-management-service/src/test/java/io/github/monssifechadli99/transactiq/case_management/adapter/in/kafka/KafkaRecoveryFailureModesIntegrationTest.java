@@ -168,8 +168,9 @@ class KafkaRecoveryFailureModesIntegrationTest {
         assertEquals(5, controlledStore.attempts());
 
         controlledStore.clearFailure();
-        kafkaTemplate.send(SOURCE, reviewEvent(UUID.randomUUID(), UUID.randomUUID())
-                .build().toByteArray()).get(10, TimeUnit.SECONDS);
+        kafkaTemplate.send(new ProducerRecord<>(SOURCE, 0, null,
+                reviewEvent(UUID.randomUUID(), UUID.randomUUID()).build().toByteArray()))
+                .get(10, TimeUnit.SECONDS);
         await(() -> controlledStore.successfulCreates() == 1, Duration.ofSeconds(10));
         await(() -> committedOffset(0) == 2, Duration.ofSeconds(10));
     }
@@ -217,8 +218,9 @@ class KafkaRecoveryFailureModesIntegrationTest {
         assertEquals(1, recoveryRecords(SOURCE + ":0:2").size());
 
         int successfulBefore = controlledStore.successfulCreates();
-        kafkaTemplate.send(SOURCE, reviewEvent(UUID.randomUUID(), UUID.randomUUID())
-                .build().toByteArray()).get(10, TimeUnit.SECONDS);
+        kafkaTemplate.send(new ProducerRecord<>(SOURCE, 0, null,
+                reviewEvent(UUID.randomUUID(), UUID.randomUUID()).build().toByteArray()))
+                .get(10, TimeUnit.SECONDS);
         await(() -> controlledStore.successfulCreates() == successfulBefore + 1,
                 Duration.ofSeconds(10));
         await(() -> committedOffset(0) == 4, Duration.ofSeconds(10));

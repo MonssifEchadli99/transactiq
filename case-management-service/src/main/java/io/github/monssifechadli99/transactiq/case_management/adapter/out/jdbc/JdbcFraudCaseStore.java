@@ -43,6 +43,7 @@ public final class JdbcFraudCaseStore implements FraudCaseStore {
     }
 
     private CreationResult createInTransaction(AuthorizationEventSnapshot event) {
+        OffsetDateTime createdAt = databaseTimestamp(clock.instant());
         UUID caseId = Objects.requireNonNull(
                 caseIdSupplier.get(), "caseIdSupplier must not return null");
         int inserted = jdbcClient.sql(
@@ -71,7 +72,9 @@ public final class JdbcFraudCaseStore implements FraudCaseStore {
                             fraud_assessment,
                             risk_score,
                             case_required,
-                            created_at
+                            created_at,
+                            version,
+                            updated_at
                         ) VALUES (
                             :caseId,
                             :sourceEventId,
@@ -96,6 +99,8 @@ public final class JdbcFraudCaseStore implements FraudCaseStore {
                             :fraudAssessment,
                             :riskScore,
                             :caseRequired,
+                            :createdAt,
+                            0,
                             :createdAt
                         )
                         ON CONFLICT DO NOTHING
@@ -124,7 +129,7 @@ public final class JdbcFraudCaseStore implements FraudCaseStore {
                 .param("fraudAssessment", event.fraudAssessment().name())
                 .param("riskScore", event.riskScore())
                 .param("caseRequired", event.caseRequired())
-                .param("createdAt", databaseTimestamp(clock.instant()))
+                .param("createdAt", createdAt)
                 .update();
 
         if (inserted == 1) {

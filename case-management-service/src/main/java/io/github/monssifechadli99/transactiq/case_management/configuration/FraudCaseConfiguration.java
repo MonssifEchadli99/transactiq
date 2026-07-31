@@ -7,9 +7,14 @@ import io.github.monssifechadli99.transactiq.case_management.adapter.in.kafka.Ka
 import io.github.monssifechadli99.transactiq.case_management.adapter.in.kafka.RecoveryHeaders;
 import io.github.monssifechadli99.transactiq.case_management.adapter.in.kafka.RecoveryRetryingRecoverer;
 import io.github.monssifechadli99.transactiq.case_management.adapter.in.kafka.TransactIqDeadLetterPublishingRecoverer;
+import io.github.monssifechadli99.transactiq.case_management.adapter.in.web.FraudCaseApiMapper;
 import io.github.monssifechadli99.transactiq.case_management.adapter.out.jdbc.JdbcFraudCaseStore;
+import io.github.monssifechadli99.transactiq.case_management.adapter.out.jdbc.JdbcFraudCaseLifecycleStore;
+import io.github.monssifechadli99.transactiq.case_management.application.service.FraudCaseCursorCodec;
 import io.github.monssifechadli99.transactiq.case_management.application.port.out.FraudCaseStore;
 import io.github.monssifechadli99.transactiq.case_management.application.service.FraudCaseCreationService;
+import io.github.monssifechadli99.transactiq.case_management.application.service.FraudCaseLifecycleService;
+import io.github.monssifechadli99.transactiq.case_management.domain.FraudCaseClaimPolicy;
 import java.time.Clock;
 import java.util.UUID;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -55,6 +60,41 @@ public class FraudCaseConfiguration {
     @Bean
     FraudCaseCreationService fraudCaseCreationService(FraudCaseStore fraudCaseStore) {
         return new FraudCaseCreationService(fraudCaseStore);
+    }
+
+    @Bean
+    JdbcFraudCaseLifecycleStore fraudCaseLifecycleStore(
+            JdbcClient jdbcClient,
+            PlatformTransactionManager transactionManager,
+            Clock fraudCaseClock,
+            FraudCaseClaimPolicy claimPolicy) {
+        return new JdbcFraudCaseLifecycleStore(
+                jdbcClient,
+                new TransactionTemplate(transactionManager),
+                fraudCaseClock,
+                UUID::randomUUID,
+                claimPolicy);
+    }
+
+    @Bean
+    FraudCaseClaimPolicy fraudCaseClaimPolicy() {
+        return new FraudCaseClaimPolicy();
+    }
+
+    @Bean
+    FraudCaseCursorCodec fraudCaseCursorCodec() {
+        return new FraudCaseCursorCodec();
+    }
+
+    @Bean
+    FraudCaseApiMapper fraudCaseApiMapper() {
+        return new FraudCaseApiMapper();
+    }
+
+    @Bean
+    FraudCaseLifecycleService fraudCaseLifecycleService(
+            JdbcFraudCaseLifecycleStore store, FraudCaseCursorCodec cursorCodec) {
+        return new FraudCaseLifecycleService(store, cursorCodec);
     }
 
     @Bean

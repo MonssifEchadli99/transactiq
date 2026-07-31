@@ -12,6 +12,7 @@ Inspect only the Case Management database:
 
 ```sql
 SELECT case_id, source_event_id, request_id, status, assignee_id,
+       version, created_at, updated_at,
        authorization_decision, decline_reason, fraud_assessment, risk_score
 FROM fraud_case.fraud_cases
 ORDER BY created_at, case_id;
@@ -19,7 +20,18 @@ ORDER BY created_at, case_id;
 SELECT case_id, match_order, rule_code, severity, evidence, score_contribution
 FROM fraud_case.fraud_case_rule_matches
 ORDER BY case_id, match_order;
+
+SELECT lifecycle_event_id, fraud_case_id, event_type, previous_status, resulting_status,
+       previous_assignee_id, resulting_assignee_id, actor_id, case_version, occurred_at
+FROM fraud_case.fraud_case_lifecycle_events
+ORDER BY fraud_case_id, case_version;
 ```
+
+The analyst HTTP boundary provides `GET /api/v1/fraud-cases`,
+`GET /api/v1/fraud-cases/{caseId}`, and `POST /api/v1/fraud-cases/{caseId}/claim`. The claim body is
+`{"expectedVersion":0}` and the caller supplies `X-Analyst-Id`. This header is an unauthenticated
+development identity only. Queue cursors provide stable traversal only while the matching result
+set remains unchanged; read-committed requests do not form one cross-request snapshot.
 
 The service must never query or mutate the authorization schema. Invalid events and identity
 conflicts are published to `transactiq.authorization.completed.v1.dlt` on the same partition.

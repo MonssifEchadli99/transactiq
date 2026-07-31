@@ -112,3 +112,17 @@ The Kafka offset is acknowledged after successful database completion or after t
 record has been acknowledged by the recovery DLT. A DLT publication failure does not advance the
 source offset. Repeated DLT publications are possible; `source-topic:partition:offset` is the stable
 recovery identifier for downstream deduplication.
+
+## Analyst claim retries and concurrency
+
+Fraud Case claim commands use an optimistic `version`. The first claim is a database compare-and-set
+over case ID, `NEW`, unassigned state, and the expected version. Concurrent claims therefore have
+one winner. The mutation and its single append-only `CLAIMED` lifecycle event commit together.
+
+A retry by the owning analyst returns the stored `IN_REVIEW` state even if it carries the original
+pre-claim version; it does not update timestamps, increment the version, or append another event.
+A different analyst receives `CASE_ALREADY_ASSIGNED`. A stale version on an otherwise claimable
+case receives `CASE_VERSION_CONFLICT`.
+
+Duplicate Kafka delivery remains separate from HTTP command idempotency: it cannot reset status,
+assignee, version, or `updatedAt`, and cannot create a lifecycle event.
