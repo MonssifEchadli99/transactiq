@@ -1,6 +1,6 @@
 # Cycle 5 Fraud-Case Creation Acceptance
 
-Automated tests are the authoritative acceptance mechanism for Increment 1. They use PostgreSQL and
+Automated tests are the authoritative acceptance mechanism. They use PostgreSQL and
 Kafka Testcontainers where infrastructure is required; the complete local stack does not need to
 be started manually.
 
@@ -22,5 +22,7 @@ ORDER BY case_id, match_order;
 ```
 
 The service must never query or mutate the authorization schema. Invalid events and identity
-conflicts intentionally block progress for their partition because this increment has no recovery,
-DLT, or DLQ policy.
+conflicts are published to `transactiq.authorization.completed.v1.dlt` on the same partition.
+Inspect DLT headers and confirm the original bytes are unchanged; exception messages, causes, and
+stack traces must not be present. A successful DLT send unblocks the next record. An unavailable or
+mispartitioned DLT must leave the source offset uncommitted and retry recovery with a positive delay.

@@ -56,7 +56,9 @@ acknowledges a message but before PostgreSQL records publication can produce a d
 idempotence reduces some producer retries but does not provide end-to-end exactly-once delivery.
 Case Management therefore stores the SHA-256 hash of the exact Kafka value bytes and persistently
 deduplicates by `eventId`. The same identifier and hash is a successful no-op; changed bytes for an
-existing identifier are a contract conflict. No DLT or DLQ exists in Cycle 5 Increment 1.
+existing identifier are a contract conflict. Increment 2 routes invalid events, contract conflicts,
+and exhausted unexpected failures to `transactiq.authorization.completed.v1.dlt` before committing
+the source offset. Temporary database/resource failures remain retryable without a fixed limit.
 
 ## Token handling
 

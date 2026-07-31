@@ -12,13 +12,24 @@ spring:
     consumer:
       enable-auto-commit: false
       auto-offset-reset: earliest
-      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      key-deserializer: org.apache.kafka.common.serialization.ByteArrayDeserializer
       value-deserializer: org.apache.kafka.common.serialization.ByteArrayDeserializer
     listener:
       ack-mode: manual_immediate
+    producer:
+      acks: all
+      key-serializer: org.apache.kafka.common.serialization.ByteArraySerializer
+      value-serializer: org.apache.kafka.common.serialization.ByteArraySerializer
+      properties:
+        enable.idempotence: true
 
 fraud-case:
   consumer:
     topic: "transactiq.authorization.completed.v1"
     group-id: "transactiq-case-management-v1"
-    retry-interval: 1s
+    retry-initial-interval: 1s
+    retry-maximum-interval: 30s
+    unexpected-total-attempts: 5
+    recovery-retry-interval: 1s
+    dlt-topic: "transactiq.authorization.completed.v1.dlt"
+    topic-partitions: 1

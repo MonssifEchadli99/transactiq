@@ -60,8 +60,8 @@ class AuthorizationCompletedEventConsumerTest {
         verify(acknowledgment, never()).acknowledge();
     }
 
-    private static ConsumerRecord<String, byte[]> record(byte[] value) {
+    private static ConsumerRecord<byte[], byte[]> record(byte[] value) {
         return new ConsumerRecord<>(
-                "transactiq.authorization.completed.v1", 0, 0, "key", value);
+                "transactiq.authorization.completed.v1", 0, 0, "key".getBytes(), value);
     }
 }

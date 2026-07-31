@@ -32,12 +32,18 @@ uniqueness on `source_event_id` and `request_id` arbitrates sequential and concu
 - Same `eventId` with another hash: contract conflict.
 - Same `requestId` with another `eventId`: contract conflict.
 
-Case and rule rows share one database transaction. The Kafka offset is acknowledged only after
-validation and successful transaction completion. Failures and conflicts create nothing and leave
-the offset uncommitted. Replay after a crash between database commit and offset commit is safe.
+Case and rule rows share one database transaction. The Kafka offset is acknowledged after a
+successful transaction. Invalid contracts and identity conflicts go directly to the recovery DLT;
+unexpected failures use five total processing attempts, and temporary database/resource failures
+retry indefinitely with capped exponential backoff. A source offset is committed after, never
+before, successful DLT publication. Replay after a crash remains safe.
+
+The DLT keeps the original key/value bytes, partition, and non-recovery headers. It adds a stable
+source-coordinate recovery ID, category, exception class, UTC recovery time, processing attempt,
+consumer group, and payload SHA-256. It intentionally excludes exception messages and stack traces.
 
 ## Explicit exclusions
 
 This increment has no HTTP API, gateway route, assignment operation, lifecycle transition,
 resolution, notes, transaction action, refund, case grouping, priority, OpenSearch projection,
-DLT/DLQ, or AI/RAG behavior.
+DLT replay tooling, or AI/RAG behavior.

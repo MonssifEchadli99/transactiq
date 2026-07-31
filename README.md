@@ -22,8 +22,8 @@ Current modules:
 
 - `authorization-service`: HTTP authorization workflow, PostgreSQL ledger/reservations, outbox,
   fraud gRPC client, and Kafka outbox relay.
-- `case-management-service`: idempotent Kafka consumer and immutable PostgreSQL fraud-case
-  snapshots.
+- `case-management-service`: idempotent Kafka consumer, immutable PostgreSQL fraud-case snapshots,
+  bounded failure classification, and a same-partition recovery DLT.
 - `fraud-contract`: versioned fraud-assessment gRPC contract.
 - `fraud-engine`: deterministic synthetic stateless and velocity fraud rules backed by Redis.
 - `event-contract`: versioned authorization-completed Protobuf contract.
@@ -67,6 +67,8 @@ See [the transaction simulator guide](docs/testing/transaction-simulator.md) for
 configuration, scenario behavior, safe fixture aliases, reporting, and complete manual acceptance
 steps. The [authorization and event acceptance guide](docs/testing/cycle-3-manual-acceptance.md)
 shows how to inspect PostgreSQL, the outbox, and Kafka separately.
+Case-consumer recovery operations are documented in
+[the Kafka recovery runbook](docs/operations/case-management-kafka-recovery.md).
 
 ## Build
 

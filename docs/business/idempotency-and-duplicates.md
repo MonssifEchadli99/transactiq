@@ -108,5 +108,7 @@ guarantee.
 - The same `requestId` with another `eventId` is a contract conflict.
 - Concurrent delivery of identical bytes creates exactly one case.
 
-The Kafka offset is acknowledged only after validation and successful database completion. A
-failure or contract conflict advances no offset, and there is no DLT or DLQ in Cycle 5 Increment 1.
+The Kafka offset is acknowledged after successful database completion or after the failed source
+record has been acknowledged by the recovery DLT. A DLT publication failure does not advance the
+source offset. Repeated DLT publications are possible; `source-topic:partition:offset` is the stable
+recovery identifier for downstream deduplication.

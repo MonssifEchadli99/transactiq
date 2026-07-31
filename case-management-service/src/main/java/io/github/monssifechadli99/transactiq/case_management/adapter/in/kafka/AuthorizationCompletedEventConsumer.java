@@ -22,7 +22,7 @@ public final class AuthorizationCompletedEventConsumer {
     @KafkaListener(
             topics = "${fraud-case.consumer.topic}",
             groupId = "${fraud-case.consumer.group-id}")
-    public void consume(ConsumerRecord<String, byte[]> record, Acknowledgment acknowledgment) {
+    public void consume(ConsumerRecord<byte[], byte[]> record, Acknowledgment acknowledgment) {
         Objects.requireNonNull(record, "record must not be null");
         Objects.requireNonNull(acknowledgment, "acknowledgment must not be null");
         creationService.process(parser.parse(record.value()));
