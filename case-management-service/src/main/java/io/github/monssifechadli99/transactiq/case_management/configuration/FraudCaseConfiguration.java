@@ -15,6 +15,7 @@ import io.github.monssifechadli99.transactiq.case_management.application.port.ou
 import io.github.monssifechadli99.transactiq.case_management.application.service.FraudCaseCreationService;
 import io.github.monssifechadli99.transactiq.case_management.application.service.FraudCaseLifecycleService;
 import io.github.monssifechadli99.transactiq.case_management.domain.FraudCaseClaimPolicy;
+import io.github.monssifechadli99.transactiq.case_management.domain.FraudCaseResolutionPolicy;
 import java.time.Clock;
 import java.util.UUID;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -67,18 +68,25 @@ public class FraudCaseConfiguration {
             JdbcClient jdbcClient,
             PlatformTransactionManager transactionManager,
             Clock fraudCaseClock,
-            FraudCaseClaimPolicy claimPolicy) {
+            FraudCaseClaimPolicy claimPolicy,
+            FraudCaseResolutionPolicy resolutionPolicy) {
         return new JdbcFraudCaseLifecycleStore(
                 jdbcClient,
                 new TransactionTemplate(transactionManager),
                 fraudCaseClock,
                 UUID::randomUUID,
-                claimPolicy);
+                claimPolicy,
+                resolutionPolicy);
     }
 
     @Bean
     FraudCaseClaimPolicy fraudCaseClaimPolicy() {
         return new FraudCaseClaimPolicy();
+    }
+
+    @Bean
+    FraudCaseResolutionPolicy fraudCaseResolutionPolicy() {
+        return new FraudCaseResolutionPolicy();
     }
 
     @Bean

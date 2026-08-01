@@ -4,15 +4,19 @@ import static io.github.monssifechadli99.transactiq.case_management.support.Auth
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.monssifechadli99.transactiq.case_management.adapter.in.kafka.AuthorizationCompletedEventParser;
 import io.github.monssifechadli99.transactiq.case_management.application.model.FraudCaseClaimResult.Outcome;
 import io.github.monssifechadli99.transactiq.case_management.application.model.FraudCaseQuery;
+import io.github.monssifechadli99.transactiq.case_management.application.model.FraudCaseResolutionResult;
 import io.github.monssifechadli99.transactiq.case_management.application.port.out.FraudCaseStore;
 import io.github.monssifechadli99.transactiq.case_management.domain.AuthorizationEventSnapshot;
 import io.github.monssifechadli99.transactiq.case_management.domain.FraudCaseAssignmentFilter;
 import io.github.monssifechadli99.transactiq.case_management.domain.FraudCaseClaimPolicy;
 import io.github.monssifechadli99.transactiq.case_management.domain.FraudCaseStatus;
+import io.github.monssifechadli99.transactiq.case_management.domain.FraudCaseResolutionPolicy;
+import io.github.monssifechadli99.transactiq.case_management.domain.FraudCaseResolutionOutcome;
 import io.github.monssifechadli99.transactiq.case_management.support.PostgreSqlTestcontainersConfiguration;
 import java.time.Clock;
 import java.time.Instant;
@@ -36,6 +40,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 class JdbcFraudCaseLifecycleStoreIntegrationTest {
     private static final Instant CREATED = Instant.parse("2026-08-01T10:00:00Z");
     private static final Instant CLAIMED = Instant.parse("2026-08-01T11:00:00Z");
+    private static final Instant RESOLVED = Instant.parse("2026-08-01T12:00:00Z");
 
     @Autowired JdbcClient jdbc;
     @Autowired PlatformTransactionManager transactionManager;
@@ -148,8 +153,9 @@ class JdbcFraudCaseLifecycleStoreIntegrationTest {
 
         UUID resolved = UUID.randomUUID();
         create(resolved, UUID.randomUUID(), CREATED);
-        jdbc.sql("UPDATE fraud_case.fraud_cases SET status = 'RESOLVED' WHERE case_id = :id")
-                .param("id", resolved).update();
+        lifecycle.claim(resolved, "analyst-a", 0);
+        lifecycleStore(RESOLVED).resolve(resolved, "analyst-a", 1,
+                FraudCaseResolutionOutcome.CONFIRMED_FRAUD, "Synthetic rationale");
         assertEquals(Outcome.NOT_CLAIMABLE, lifecycle.claim(resolved, "analyst-a", 0).outcome());
         assertEquals(Outcome.NOT_FOUND, lifecycle.claim(UUID.randomUUID(), "analyst-a", 0).outcome());
     }
@@ -198,6 +204,136 @@ class JdbcFraudCaseLifecycleStoreIntegrationTest {
         assertEquals(1, auditCount(caseId));
     }
 
+    @Test
+    void resolutionPersistsOneTimestampExactRetryAndOrderedHistory() {
+        UUID caseId = UUID.randomUUID();
+        AuthorizationEventSnapshot event = create(caseId, UUID.randomUUID(), CREATED);
+        lifecycle.claim(caseId, "analyst-a", 0);
+        JdbcFraudCaseLifecycleStore resolving = lifecycleStore(RESOLVED);
+
+        var result = resolving.resolve(caseId, "analyst-a", 1,
+                FraudCaseResolutionOutcome.CONFIRMED_FRAUD, "Synthetic rationale");
+        var retry = lifecycleStore(RESOLVED.plusSeconds(60)).resolve(
+                caseId, "analyst-a", 1,
+                FraudCaseResolutionOutcome.CONFIRMED_FRAUD, "Synthetic rationale");
+
+        assertEquals(FraudCaseResolutionResult.Outcome.RESOLVED, result.outcome());
+        assertEquals(FraudCaseResolutionResult.Outcome.ALREADY_RESOLVED_IDENTICALLY, retry.outcome());
+        var resolved = retry.fraudCase();
+        assertEquals(FraudCaseStatus.RESOLVED, resolved.status());
+        assertEquals("analyst-a", resolved.assigneeId());
+        assertEquals(2, resolved.version());
+        assertEquals(FraudCaseResolutionOutcome.CONFIRMED_FRAUD, resolved.resolutionOutcome());
+        assertEquals("Synthetic rationale", resolved.resolutionRationale());
+        assertEquals("analyst-a", resolved.resolvedBy());
+        assertEquals(RESOLVED, resolved.resolvedAt());
+        assertEquals(RESOLVED, resolved.updatedAt());
+        assertEquals(event.sourceEventHash(), resolved.sourceEventHash());
+        assertEquals(event.matchedRules(), resolved.matchedRules());
+
+        var history = resolving.findHistory(caseId).orElseThrow();
+        assertEquals(List.of("CLAIMED", "RESOLVED"),
+                history.stream().map(item -> item.eventType()).toList());
+        assertEquals(List.of(1L, 2L), history.stream().map(item -> item.caseVersion()).toList());
+        assertNull(history.getFirst().resolutionOutcome());
+        assertEquals(RESOLVED, history.getLast().occurredAt());
+        assertEquals(FraudCaseResolutionOutcome.CONFIRMED_FRAUD,
+                history.getLast().resolutionOutcome());
+        assertEquals(2, auditCount(caseId));
+        assertTrue(resolving.findHistory(UUID.randomUUID()).isEmpty());
+    }
+
+    @Test
+    void resolutionClassifiesNewOwnerVersionAndResolvedConflicts() {
+        UUID newCase = UUID.randomUUID();
+        create(newCase, UUID.randomUUID(), CREATED);
+        assertEquals(resolutionOutcome("NOT_IN_REVIEW"), lifecycle.resolve(
+                newCase, "analyst-a", 0, FraudCaseResolutionOutcome.CONFIRMED_FRAUD,
+                "Synthetic rationale").outcome());
+
+        UUID owned = UUID.randomUUID();
+        create(owned, UUID.randomUUID(), CREATED);
+        lifecycle.claim(owned, "analyst-a", 0);
+        assertEquals(resolutionOutcome("NOT_ASSIGNED_TO_ANALYST"), lifecycle.resolve(
+                owned, "analyst-b", 1, FraudCaseResolutionOutcome.CONFIRMED_FRAUD,
+                "Synthetic rationale").outcome());
+        assertEquals(resolutionOutcome("VERSION_CONFLICT"), lifecycle.resolve(
+                owned, "analyst-a", 0, FraudCaseResolutionOutcome.CONFIRMED_FRAUD,
+                "Synthetic rationale").outcome());
+        lifecycle.resolve(owned, "analyst-a", 1,
+                FraudCaseResolutionOutcome.CONFIRMED_FRAUD, "Synthetic rationale");
+        assertEquals(resolutionOutcome("ALREADY_RESOLVED_DIFFERENTLY"), lifecycle.resolve(
+                owned, "analyst-a", 1, FraudCaseResolutionOutcome.FALSE_POSITIVE,
+                "Synthetic rationale").outcome());
+        assertEquals(resolutionOutcome("VERSION_CONFLICT"), lifecycle.resolve(
+                owned, "analyst-a", 0, FraudCaseResolutionOutcome.CONFIRMED_FRAUD,
+                "Synthetic rationale").outcome());
+    }
+
+    @Test
+    void concurrentDifferentResolutionsHaveOneWinnerAndOneAudit() throws Exception {
+        UUID caseId = UUID.randomUUID();
+        create(caseId, UUID.randomUUID(), CREATED);
+        lifecycle.claim(caseId, "analyst-a", 0);
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var first = executor.submit(() -> resolveTogether(caseId,
+                    FraudCaseResolutionOutcome.CONFIRMED_FRAUD, "Synthetic rationale A",
+                    ready, start));
+            var second = executor.submit(() -> resolveTogether(caseId,
+                    FraudCaseResolutionOutcome.FALSE_POSITIVE, "Synthetic rationale B",
+                    ready, start));
+            assertTrue(ready.await(5, TimeUnit.SECONDS));
+            start.countDown();
+            var outcomes = List.of(first.get(10, TimeUnit.SECONDS), second.get(10, TimeUnit.SECONDS));
+            assertEquals(1, outcomes.stream().filter(value -> value.equals("RESOLVED")).count());
+            assertEquals(1, outcomes.stream().filter(
+                    value -> value.equals("ALREADY_RESOLVED_DIFFERENTLY")).count());
+        }
+        assertEquals(2, auditCount(caseId));
+    }
+
+    @Test
+    void resolutionAuditFailureRollsBackAndDuplicateCreationPreservesResolution() {
+        UUID caseId = UUID.randomUUID();
+        UUID requestId = UUID.randomUUID();
+        AuthorizationEventSnapshot event = create(caseId, requestId, CREATED);
+        lifecycle.claim(caseId, "analyst-a", 0);
+        jdbc.sql("""
+                CREATE FUNCTION fraud_case.reject_resolution_event() RETURNS trigger AS $$
+                BEGIN IF NEW.event_type = 'RESOLVED' THEN
+                    RAISE EXCEPTION 'synthetic resolution audit failure';
+                END IF; RETURN NEW; END; $$ LANGUAGE plpgsql
+                """).update();
+        jdbc.sql("""
+                CREATE TRIGGER reject_resolution_event BEFORE INSERT
+                ON fraud_case.fraud_case_lifecycle_events
+                FOR EACH ROW EXECUTE FUNCTION fraud_case.reject_resolution_event()
+                """).update();
+        try {
+            assertThrows(RuntimeException.class, () -> lifecycleStore(RESOLVED).resolve(
+                    caseId, "analyst-a", 1, FraudCaseResolutionOutcome.CONFIRMED_FRAUD,
+                    "Synthetic rationale"));
+            var unchanged = lifecycle.findById(caseId).orElseThrow();
+            assertEquals(FraudCaseStatus.IN_REVIEW, unchanged.status());
+            assertEquals(1, unchanged.version());
+            assertNull(unchanged.resolutionOutcome());
+            assertEquals(1, auditCount(caseId));
+        } finally {
+            jdbc.sql("DROP TRIGGER reject_resolution_event ON fraud_case.fraud_case_lifecycle_events").update();
+            jdbc.sql("DROP FUNCTION fraud_case.reject_resolution_event()").update();
+        }
+
+        lifecycleStore(RESOLVED).resolve(caseId, "analyst-a", 1,
+                FraudCaseResolutionOutcome.CONFIRMED_FRAUD, "Synthetic rationale");
+        var before = lifecycle.findById(caseId).orElseThrow();
+        assertEquals(FraudCaseStore.CreationResult.ALREADY_EXISTS,
+                creationStore(RESOLVED.plusSeconds(60), UUID::randomUUID).create(event));
+        assertEquals(before, lifecycleStore(RESOLVED.plusSeconds(120)).findById(caseId).orElseThrow());
+        assertEquals(2, auditCount(caseId));
+    }
+
     private Outcome claimTogether(
             UUID caseId, String analyst, CountDownLatch ready, CountDownLatch start) throws Exception {
         ready.countDown();
@@ -205,6 +341,21 @@ class JdbcFraudCaseLifecycleStoreIntegrationTest {
             throw new AssertionError("claim start was not released");
         }
         return lifecycle.claim(caseId, analyst, 0).outcome();
+    }
+
+    private String resolveTogether(
+            UUID caseId, FraudCaseResolutionOutcome outcome, String rationale,
+            CountDownLatch ready, CountDownLatch start) throws Exception {
+        ready.countDown();
+        if (!start.await(5, TimeUnit.SECONDS)) {
+            throw new AssertionError("resolution start was not released");
+        }
+        return lifecycleStore(RESOLVED).resolve(caseId, "analyst-a", 1, outcome, rationale)
+                .outcome().name();
+    }
+
+    private static FraudCaseResolutionResult.Outcome resolutionOutcome(String name) {
+        return FraudCaseResolutionResult.Outcome.valueOf(name);
     }
 
     private AuthorizationEventSnapshot create(UUID caseId, UUID requestId, Instant createdAt) {
@@ -224,7 +375,7 @@ class JdbcFraudCaseLifecycleStoreIntegrationTest {
     private JdbcFraudCaseLifecycleStore lifecycleStore(Instant instant) {
         return new JdbcFraudCaseLifecycleStore(jdbc, new TransactionTemplate(transactionManager),
                 Clock.fixed(instant, ZoneOffset.UTC), UUID::randomUUID,
-                new FraudCaseClaimPolicy());
+                new FraudCaseClaimPolicy(), new FraudCaseResolutionPolicy());
     }
 
     private int auditCount(UUID caseId) {

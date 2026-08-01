@@ -23,7 +23,7 @@ Current modules:
 - `authorization-service`: HTTP authorization workflow, PostgreSQL ledger/reservations, outbox,
   fraud gRPC client, and Kafka outbox relay.
 - `case-management-service`: idempotent Kafka consumer, immutable PostgreSQL fraud-case snapshots,
-  bounded failure recovery, and analyst queue/detail/self-claim HTTP APIs.
+  bounded failure recovery, and analyst queue/detail/claim/resolve/history HTTP APIs.
 - `fraud-contract`: versioned fraud-assessment gRPC contract.
 - `fraud-engine`: deterministic synthetic stateless and velocity fraud rules backed by Redis.
 - `event-contract`: versioned authorization-completed Protobuf contract.
@@ -53,8 +53,10 @@ Start case management in another window:
 .\gradlew.bat :case-management-service:bootRun
 ```
 
-Its development-only analyst API is under `/api/v1/fraud-cases`. Self-claim and `assignment=MINE`
-use caller-supplied `X-Analyst-Id`; this is deliberately not authentication or authorization.
+Its development-only analyst API is under `/api/v1/fraud-cases`. Claim, resolution, and
+`assignment=MINE` use caller-supplied `X-Analyst-Id`; this is deliberately not authentication or
+authorization. Resolution requires `CONFIRMED_FRAUD` or `FALSE_POSITIVE` plus a normalized,
+synthetic rationale. Lifecycle-history reads do not require a fake identity header.
 
 Then run the deterministic simulator catalog in another window:
 

@@ -95,6 +95,66 @@ class FraudCaseHttpIntegrationTest {
                 () -> postClaim(caseId, "analyst-b", "{\"expectedVersion\":0}"));
     }
 
+    @Test
+    void resolveReturnsCompleteCaseSupportsExactRetryAndHistory() {
+        postClaim(caseId, "analyst-a", "{\"expectedVersion\":0}");
+        String body = """
+                {"expectedVersion":1,"outcome":"CONFIRMED_FRAUD",
+                 "rationale":"  Synthetic evidence confirms fraud.  "}
+                """;
+        String resolved = postResolve(caseId, "analyst-a", body);
+        assertTrue(resolved.contains("\"status\":\"RESOLVED\""), resolved);
+        assertTrue(resolved.contains("\"assigneeId\":\"analyst-a\""), resolved);
+        assertTrue(resolved.contains("\"version\":2"), resolved);
+        assertTrue(resolved.contains("\"resolutionOutcome\":\"CONFIRMED_FRAUD\""), resolved);
+        assertTrue(resolved.contains("\"resolutionRationale\":\"Synthetic evidence confirms fraud.\""), resolved);
+        assertTrue(resolved.contains("\"resolvedBy\":\"analyst-a\""), resolved);
+        assertTrue(resolved.contains("\"matchedRules\""), resolved);
+
+        assertEquals(resolved, postResolve(caseId, " analyst-a ", body));
+        String history = get("/api/v1/fraud-cases/" + caseId + "/history");
+        assertTrue(history.indexOf("\"eventType\":\"CLAIMED\"")
+                < history.indexOf("\"eventType\":\"RESOLVED\""), history);
+        assertTrue(history.contains("\"caseVersion\":1"), history);
+        assertTrue(history.contains("\"caseVersion\":2"), history);
+        assertTrue(history.contains("\"resolutionOutcome\":null"), history);
+    }
+
+    @Test
+    void resolveAndHistoryMapApprovedValidationAndConflicts() {
+        assertError(HttpStatus.NOT_FOUND, "FRAUD_CASE_NOT_FOUND",
+                () -> get("/api/v1/fraud-cases/" + UUID.randomUUID() + "/history"));
+        assertEquals("{\"items\":[]}", get("/api/v1/fraud-cases/" + caseId + "/history"));
+        assertError(HttpStatus.CONFLICT, "CASE_NOT_IN_REVIEW",
+                () -> postResolve(caseId, "analyst-a", validResolution(0)));
+
+        postClaim(caseId, "analyst-a", "{\"expectedVersion\":0}");
+        assertError(HttpStatus.CONFLICT, "CASE_NOT_ASSIGNED_TO_ANALYST",
+                () -> postResolve(caseId, "analyst-b", validResolution(1)));
+        assertError(HttpStatus.CONFLICT, "CASE_VERSION_CONFLICT",
+                () -> postResolve(caseId, "analyst-a", validResolution(0)));
+        assertError(HttpStatus.BAD_REQUEST, "INVALID_ANALYST_ID",
+                () -> postResolve(caseId, null, validResolution(1)));
+        assertError(HttpStatus.BAD_REQUEST, "INVALID_RESOLUTION_RATIONALE",
+                () -> postResolve(caseId, "analyst-a",
+                        "{\"expectedVersion\":1,\"outcome\":\"CONFIRMED_FRAUD\",\"rationale\":\"short\"}"));
+        assertError(HttpStatus.BAD_REQUEST, "INVALID_FRAUD_CASE_REQUEST",
+                () -> postResolve(caseId, "analyst-a",
+                        "{\"outcome\":\"CONFIRMED_FRAUD\",\"rationale\":\"Synthetic rationale\"}"));
+        assertError(HttpStatus.BAD_REQUEST, "INVALID_FRAUD_CASE_REQUEST",
+                () -> postResolve(caseId, "analyst-a",
+                        "{\"expectedVersion\":1,\"rationale\":\"Synthetic rationale\"}"));
+
+        postResolve(caseId, "analyst-a", validResolution(1));
+        assertError(HttpStatus.CONFLICT, "CASE_ALREADY_RESOLVED_DIFFERENTLY",
+                () -> postResolve(caseId, "analyst-a", """
+                        {"expectedVersion":1,"outcome":"FALSE_POSITIVE",
+                         "rationale":"Synthetic rationale"}
+                        """));
+        assertError(HttpStatus.CONFLICT, "CASE_VERSION_CONFLICT",
+                () -> postResolve(caseId, "analyst-a", validResolution(0)));
+    }
+
     private String get(String uri) {
         return client.get().uri(uri).retrieve().body(String.class);
     }
@@ -111,6 +171,21 @@ class FraudCaseHttpIntegrationTest {
             request = request.header(FraudCaseController.ANALYST_HEADER, analyst);
         }
         return request.body(body).retrieve().body(String.class);
+    }
+
+    private String postResolve(UUID id, String analyst, String body) {
+        var request = client.post().uri("/api/v1/fraud-cases/{id}/resolve", id)
+                .contentType(MediaType.APPLICATION_JSON);
+        if (analyst != null) {
+            request = request.header(FraudCaseController.ANALYST_HEADER, analyst);
+        }
+        return request.body(body).retrieve().body(String.class);
+    }
+
+    private static String validResolution(long version) {
+        return "{\"expectedVersion\":" + version
+                + ",\"outcome\":\"CONFIRMED_FRAUD\","
+                + "\"rationale\":\"Synthetic rationale\"}";
     }
 
     private static void assertError(HttpStatus status, String code, ThrowingCall call) {

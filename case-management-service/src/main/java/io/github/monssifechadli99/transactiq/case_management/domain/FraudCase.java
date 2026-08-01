@@ -30,6 +30,10 @@ public record FraudCase(
         boolean caseRequired,
         Instant createdAt,
         Instant updatedAt,
+        FraudCaseResolutionOutcome resolutionOutcome,
+        String resolutionRationale,
+        Instant resolvedAt,
+        String resolvedBy,
         List<FraudRuleSnapshot> matchedRules) {
 
     public FraudCase {

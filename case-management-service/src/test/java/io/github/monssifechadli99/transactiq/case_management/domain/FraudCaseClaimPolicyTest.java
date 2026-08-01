@@ -34,6 +34,7 @@ class FraudCaseClaimPolicyTest {
                 status, assignee, version, now, "b".repeat(64), "merchant", "5411",
                 new BigDecimal("10.00"), "EUR", "DE", TransactionChannel.ECOMMERCE,
                 now, NonFraudResult.PASSED, AuthorizationDecision.APPROVED, null,
-                FraudAssessment.REVIEW, 15, true, now, now, List.of());
+                FraudAssessment.REVIEW, 15, true, now, now,
+                null, null, null, null, List.of());
     }
 }

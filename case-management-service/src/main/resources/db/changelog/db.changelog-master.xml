@@ -7,4 +7,5 @@
     <include file="changes/001-create-fraud-case-schema.sql" relativeToChangelogFile="true"/>
     <include file="changes/002-create-fraud-case-tables.sql" relativeToChangelogFile="true"/>
     <include file="changes/003-add-fraud-case-lifecycle.sql" relativeToChangelogFile="true"/>
+    <include file="changes/004-add-fraud-case-resolution.sql" relativeToChangelogFile="true"/>
 </databaseChangeLog>

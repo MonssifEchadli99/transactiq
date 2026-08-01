@@ -126,3 +126,18 @@ case receives `CASE_VERSION_CONFLICT`.
 
 Duplicate Kafka delivery remains separate from HTTP command idempotency: it cannot reset status,
 assignee, version, or `updatedAt`, and cannot create a lifecycle event.
+
+## Analyst resolution retries and concurrency
+
+Resolution uses a database compare-and-set over case ID, `IN_REVIEW`, exact current assignee, and
+expected version. The winner stores the normalized resolution summary, increments the version once,
+and appends one `RESOLVED` event in the same transaction. Audit failure rolls back the case update.
+
+After commit, an exact retry is a successful no-op only when the stored actor, outcome, and
+normalized rationale match and the stored version equals `expectedVersion + 1`. The comparison
+guards arithmetic overflow. Matching data with another predecessor version is a version conflict;
+different actor or resolution data is `CASE_ALREADY_RESOLVED_DIFFERENTLY`. Concurrent identical
+commands may both succeed but only one mutates; conflicting commands have one winner.
+
+Duplicate Kafka creation after resolution remains a no-op and cannot reset the resolution summary,
+status, assignee, version, timestamps, immutable fraud evidence, or lifecycle history.

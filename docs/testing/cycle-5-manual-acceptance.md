@@ -12,7 +12,8 @@ Inspect only the Case Management database:
 
 ```sql
 SELECT case_id, source_event_id, request_id, status, assignee_id,
-       version, created_at, updated_at,
+       version, created_at, updated_at, resolution_outcome, resolution_rationale,
+       resolved_at, resolved_by,
        authorization_decision, decline_reason, fraud_assessment, risk_score
 FROM fraud_case.fraud_cases
 ORDER BY created_at, case_id;
@@ -22,16 +23,25 @@ FROM fraud_case.fraud_case_rule_matches
 ORDER BY case_id, match_order;
 
 SELECT lifecycle_event_id, fraud_case_id, event_type, previous_status, resulting_status,
-       previous_assignee_id, resulting_assignee_id, actor_id, case_version, occurred_at
+       previous_assignee_id, resulting_assignee_id, actor_id, case_version, occurred_at,
+       resolution_outcome, resolution_rationale
 FROM fraud_case.fraud_case_lifecycle_events
 ORDER BY fraud_case_id, case_version;
 ```
 
-The analyst HTTP boundary provides `GET /api/v1/fraud-cases`,
-`GET /api/v1/fraud-cases/{caseId}`, and `POST /api/v1/fraud-cases/{caseId}/claim`. The claim body is
-`{"expectedVersion":0}` and the caller supplies `X-Analyst-Id`. This header is an unauthenticated
-development identity only. Queue cursors provide stable traversal only while the matching result
-set remains unchanged; read-committed requests do not form one cross-request snapshot.
+The analyst HTTP boundary provides queue, detail, claim, resolution, and history under
+`/api/v1/fraud-cases`. Claim uses `{"expectedVersion":0}`. Resolution uses the claimed predecessor
+version, one approved outcome, and a mandatory normalized rationale. Both commands use
+`X-Analyst-Id`; this is unauthenticated development identity only. History requires no identity,
+returns persisted events ordered by case version, and never invents a `CREATED` event. Queue cursors
+provide stable traversal only while the matching result set remains unchanged; read-committed
+requests do not form one cross-request snapshot.
+
+An exact resolution retry succeeds only for the same normalized actor, outcome, rationale, and
+predecessor version. It must not change version or timestamps or add an event. Conflicting commands
+must preserve the winner. Resolution must not change authorization outcome, balance, fraud
+assessment, risk score, rule evidence, Kafka identity, or source hash. Use only synthetic,
+non-sensitive rationale text.
 
 The service must never query or mutate the authorization schema. Invalid events and identity
 conflicts are published to `transactiq.authorization.completed.v1.dlt` on the same partition.

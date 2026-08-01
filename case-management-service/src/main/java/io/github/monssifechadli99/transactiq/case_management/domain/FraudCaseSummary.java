@@ -17,4 +17,5 @@ public record FraudCaseSummary(
         String merchantId,
         Instant occurredAt,
         Instant createdAt,
-        Instant updatedAt) {}
+        Instant updatedAt,
+        FraudCaseResolutionOutcome resolutionOutcome) {}

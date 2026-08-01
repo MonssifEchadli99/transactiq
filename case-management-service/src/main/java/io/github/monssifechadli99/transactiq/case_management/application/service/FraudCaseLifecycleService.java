@@ -7,6 +7,9 @@ import io.github.monssifechadli99.transactiq.case_management.application.port.ou
 import io.github.monssifechadli99.transactiq.case_management.domain.FraudCase;
 import io.github.monssifechadli99.transactiq.case_management.domain.FraudCaseAssignmentFilter;
 import io.github.monssifechadli99.transactiq.case_management.domain.FraudCaseStatus;
+import io.github.monssifechadli99.transactiq.case_management.domain.FraudCaseLifecycleEvent;
+import io.github.monssifechadli99.transactiq.case_management.domain.FraudCaseResolutionOutcome;
+import java.util.List;
 import java.util.UUID;
 
 public final class FraudCaseLifecycleService {
@@ -62,5 +65,33 @@ public final class FraudCaseLifecycleService {
             case VERSION_CONFLICT -> throw new FraudCaseConflictException("CASE_VERSION_CONFLICT");
             case NOT_CLAIMABLE -> throw new FraudCaseConflictException("CASE_NOT_CLAIMABLE");
         };
+    }
+
+    public FraudCase resolve(
+            UUID caseId, String analystHeader, long expectedVersion,
+            FraudCaseResolutionOutcome outcome, String rationale) {
+        if (expectedVersion < 0) {
+            throw new InvalidFraudCaseRequestException("INVALID_EXPECTED_VERSION");
+        }
+        if (outcome == null) {
+            throw new InvalidFraudCaseRequestException("INVALID_RESOLUTION_OUTCOME");
+        }
+        String analystId = AnalystIdentity.required(analystHeader);
+        String normalizedRationale = ResolutionRationale.normalize(rationale);
+        var result = store.resolve(caseId, analystId, expectedVersion, outcome, normalizedRationale);
+        return switch (result.outcome()) {
+            case RESOLVED, ALREADY_RESOLVED_IDENTICALLY -> result.fraudCase();
+            case NOT_FOUND -> throw new FraudCaseNotFoundException();
+            case NOT_IN_REVIEW -> throw new FraudCaseConflictException("CASE_NOT_IN_REVIEW");
+            case NOT_ASSIGNED_TO_ANALYST ->
+                    throw new FraudCaseConflictException("CASE_NOT_ASSIGNED_TO_ANALYST");
+            case VERSION_CONFLICT -> throw new FraudCaseConflictException("CASE_VERSION_CONFLICT");
+            case ALREADY_RESOLVED_DIFFERENTLY ->
+                    throw new FraudCaseConflictException("CASE_ALREADY_RESOLVED_DIFFERENTLY");
+        };
+    }
+
+    public List<FraudCaseLifecycleEvent> history(UUID caseId) {
+        return store.findHistory(caseId).orElseThrow(FraudCaseNotFoundException::new);
     }
 }

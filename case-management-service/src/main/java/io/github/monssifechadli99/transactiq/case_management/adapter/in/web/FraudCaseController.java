@@ -2,6 +2,7 @@ package io.github.monssifechadli99.transactiq.case_management.adapter.in.web;
 
 import io.github.monssifechadli99.transactiq.case_management.api.FraudCaseApiResponse;
 import io.github.monssifechadli99.transactiq.case_management.api.FraudCaseClaimRequest;
+import io.github.monssifechadli99.transactiq.case_management.api.FraudCaseResolveRequest;
 import io.github.monssifechadli99.transactiq.case_management.application.service.FraudCaseLifecycleService;
 import io.github.monssifechadli99.transactiq.case_management.domain.FraudCaseAssignmentFilter;
 import io.github.monssifechadli99.transactiq.case_management.domain.FraudCaseStatus;
@@ -53,5 +54,23 @@ public final class FraudCaseController {
             @RequestHeader(name = ANALYST_HEADER, required = false) String analystId,
             @Valid @RequestBody FraudCaseClaimRequest request) {
         return mapper.toDetail(service.claim(caseId, analystId, request.expectedVersion()));
+    }
+
+    @PostMapping(
+            path = "/{caseId}/resolve",
+            consumes = MediaType.APPLICATION_JSON_VALUE,
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    public FraudCaseApiResponse.Detail resolve(
+            @PathVariable UUID caseId,
+            @RequestHeader(name = ANALYST_HEADER, required = false) String analystId,
+            @Valid @RequestBody FraudCaseResolveRequest request) {
+        return mapper.toDetail(service.resolve(
+                caseId, analystId, request.expectedVersion(),
+                request.outcome(), request.rationale()));
+    }
+
+    @GetMapping(path = "/{caseId}/history", produces = MediaType.APPLICATION_JSON_VALUE)
+    public FraudCaseApiResponse.History history(@PathVariable UUID caseId) {
+        return mapper.toHistory(service.history(caseId));
     }
 }

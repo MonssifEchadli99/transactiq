@@ -3,6 +3,7 @@ package io.github.monssifechadli99.transactiq.case_management.adapter.out.jdbc;
 import io.github.monssifechadli99.transactiq.case_management.application.model.FraudCaseClaimResult;
 import io.github.monssifechadli99.transactiq.case_management.application.model.FraudCaseClaimResult.Outcome;
 import io.github.monssifechadli99.transactiq.case_management.application.model.FraudCaseQuery;
+import io.github.monssifechadli99.transactiq.case_management.application.model.FraudCaseResolutionResult;
 import io.github.monssifechadli99.transactiq.case_management.application.port.out.FraudCaseLifecycleStore;
 import io.github.monssifechadli99.transactiq.case_management.domain.AuthorizationDecision;
 import io.github.monssifechadli99.transactiq.case_management.domain.DeclineReason;
@@ -11,6 +12,9 @@ import io.github.monssifechadli99.transactiq.case_management.domain.FraudCase;
 import io.github.monssifechadli99.transactiq.case_management.domain.FraudCaseAssignmentFilter;
 import io.github.monssifechadli99.transactiq.case_management.domain.FraudCaseClaimPolicy;
 import io.github.monssifechadli99.transactiq.case_management.domain.FraudCaseStatus;
+import io.github.monssifechadli99.transactiq.case_management.domain.FraudCaseLifecycleEvent;
+import io.github.monssifechadli99.transactiq.case_management.domain.FraudCaseResolutionOutcome;
+import io.github.monssifechadli99.transactiq.case_management.domain.FraudCaseResolutionPolicy;
 import io.github.monssifechadli99.transactiq.case_management.domain.FraudCaseSummary;
 import io.github.monssifechadli99.transactiq.case_management.domain.FraudRuleSeverity;
 import io.github.monssifechadli99.transactiq.case_management.domain.FraudRuleSnapshot;
@@ -37,18 +41,21 @@ public final class JdbcFraudCaseLifecycleStore implements FraudCaseLifecycleStor
     private final Clock clock;
     private final Supplier<UUID> lifecycleEventIdSupplier;
     private final FraudCaseClaimPolicy claimPolicy;
+    private final FraudCaseResolutionPolicy resolutionPolicy;
 
     public JdbcFraudCaseLifecycleStore(
             JdbcClient jdbcClient,
             TransactionOperations transactions,
             Clock clock,
             Supplier<UUID> lifecycleEventIdSupplier,
-            FraudCaseClaimPolicy claimPolicy) {
+            FraudCaseClaimPolicy claimPolicy,
+            FraudCaseResolutionPolicy resolutionPolicy) {
         this.jdbcClient = jdbcClient;
         this.transactions = transactions;
         this.clock = clock;
         this.lifecycleEventIdSupplier = lifecycleEventIdSupplier;
         this.claimPolicy = claimPolicy;
+        this.resolutionPolicy = resolutionPolicy;
     }
 
     @Override
@@ -56,7 +63,7 @@ public final class JdbcFraudCaseLifecycleStore implements FraudCaseLifecycleStor
         StringBuilder sql = new StringBuilder("""
                 SELECT case_id, status, assignee_id, version, fraud_assessment, risk_score,
                        authorization_decision, amount, currency, merchant_id, occurred_at,
-                       created_at, updated_at
+                       created_at, updated_at, resolution_outcome
                 FROM fraud_case.fraud_cases
                 WHERE 1 = 1
                 """);
@@ -104,6 +111,123 @@ public final class JdbcFraudCaseLifecycleStore implements FraudCaseLifecycleStor
         FraudCaseClaimResult result = transactions.execute(status ->
                 claimInTransaction(caseId, analystId, expectedVersion));
         return Objects.requireNonNull(result, "claim transaction must return a result");
+    }
+
+    @Override
+    public FraudCaseResolutionResult resolve(
+            UUID caseId, String analystId, long expectedVersion,
+            FraudCaseResolutionOutcome outcome, String rationale) {
+        FraudCaseResolutionResult result = transactions.execute(status ->
+                resolveInTransaction(caseId, analystId, expectedVersion, outcome, rationale));
+        return Objects.requireNonNull(result, "resolution transaction must return a result");
+    }
+
+    private FraudCaseResolutionResult resolveInTransaction(
+            UUID caseId, String analystId, long expectedVersion,
+            FraudCaseResolutionOutcome outcome, String rationale) {
+        Instant now = clock.instant();
+        int updated = jdbcClient.sql("""
+                        UPDATE fraud_case.fraud_cases
+                        SET status = 'RESOLVED',
+                            resolution_outcome = :outcome,
+                            resolution_rationale = :rationale,
+                            resolved_at = :resolvedAt,
+                            resolved_by = :analystId,
+                            version = version + 1,
+                            updated_at = :resolvedAt
+                        WHERE case_id = :caseId
+                          AND status = 'IN_REVIEW'
+                          AND assignee_id = :analystId
+                          AND version = :expectedVersion
+                          AND version < 9223372036854775807
+                        """)
+                .param("outcome", outcome.name())
+                .param("rationale", rationale)
+                .param("resolvedAt", databaseTimestamp(now))
+                .param("analystId", analystId)
+                .param("caseId", caseId)
+                .param("expectedVersion", expectedVersion)
+                .update();
+        if (updated == 1) {
+            long resultingVersion = expectedVersion + 1;
+            int inserted = jdbcClient.sql("""
+                            INSERT INTO fraud_case.fraud_case_lifecycle_events (
+                                lifecycle_event_id, fraud_case_id, event_type,
+                                previous_status, resulting_status,
+                                previous_assignee_id, resulting_assignee_id,
+                                actor_id, case_version, occurred_at,
+                                resolution_outcome, resolution_rationale
+                            ) VALUES (
+                                :eventId, :caseId, 'RESOLVED', 'IN_REVIEW', 'RESOLVED',
+                                :analystId, :analystId, :analystId, :caseVersion, :occurredAt,
+                                :outcome, :rationale
+                            )
+                            """)
+                    .param("eventId", lifecycleEventIdSupplier.get())
+                    .param("caseId", caseId)
+                    .param("analystId", analystId)
+                    .param("caseVersion", resultingVersion)
+                    .param("occurredAt", databaseTimestamp(now))
+                    .param("outcome", outcome.name())
+                    .param("rationale", rationale)
+                    .update();
+            if (inserted != 1) {
+                throw new IllegalStateException("Expected one resolution event to be inserted");
+            }
+            return new FraudCaseResolutionResult(
+                    FraudCaseResolutionResult.Outcome.RESOLVED, requiredCase(caseId));
+        }
+
+        Optional<FraudCase> existing = findById(caseId);
+        if (existing.isEmpty()) {
+            return new FraudCaseResolutionResult(
+                    FraudCaseResolutionResult.Outcome.NOT_FOUND, null);
+        }
+        FraudCase fraudCase = existing.get();
+        FraudCaseResolutionResult.Outcome classified = switch (resolutionPolicy.classify(
+                fraudCase, analystId, expectedVersion, outcome, rationale)) {
+            case RESOLVABLE -> throw new IllegalStateException("Resolvable case failed atomic update");
+            case ALREADY_RESOLVED_IDENTICALLY ->
+                    FraudCaseResolutionResult.Outcome.ALREADY_RESOLVED_IDENTICALLY;
+            case ALREADY_RESOLVED_DIFFERENTLY ->
+                    FraudCaseResolutionResult.Outcome.ALREADY_RESOLVED_DIFFERENTLY;
+            case NOT_IN_REVIEW -> FraudCaseResolutionResult.Outcome.NOT_IN_REVIEW;
+            case NOT_ASSIGNED_TO_ANALYST ->
+                    FraudCaseResolutionResult.Outcome.NOT_ASSIGNED_TO_ANALYST;
+            case VERSION_CONFLICT -> FraudCaseResolutionResult.Outcome.VERSION_CONFLICT;
+        };
+        return new FraudCaseResolutionResult(classified, fraudCase);
+    }
+
+    @Override
+    public Optional<List<FraudCaseLifecycleEvent>> findHistory(UUID caseId) {
+        if (jdbcClient.sql("SELECT count(*) FROM fraud_case.fraud_cases WHERE case_id = :caseId")
+                .param("caseId", caseId).query(Integer.class).single() == 0) {
+            return Optional.empty();
+        }
+        List<FraudCaseLifecycleEvent> events = jdbcClient.sql("""
+                        SELECT lifecycle_event_id, event_type, previous_status, resulting_status,
+                               previous_assignee_id, resulting_assignee_id, actor_id,
+                               case_version, occurred_at, resolution_outcome, resolution_rationale
+                        FROM fraud_case.fraud_case_lifecycle_events
+                        WHERE fraud_case_id = :caseId
+                        ORDER BY case_version ASC, lifecycle_event_id ASC
+                        """)
+                .param("caseId", caseId)
+                .query((rs, row) -> new FraudCaseLifecycleEvent(
+                        rs.getObject("lifecycle_event_id", UUID.class),
+                        rs.getString("event_type"),
+                        FraudCaseStatus.valueOf(rs.getString("previous_status")),
+                        FraudCaseStatus.valueOf(rs.getString("resulting_status")),
+                        rs.getString("previous_assignee_id"),
+                        rs.getString("resulting_assignee_id"),
+                        rs.getString("actor_id"),
+                        rs.getLong("case_version"),
+                        instant(rs, "occurred_at"),
+                        nullableResolutionOutcome(rs.getString("resolution_outcome")),
+                        rs.getString("resolution_rationale")))
+                .list();
+        return Optional.of(events);
     }
 
     private FraudCaseClaimResult claimInTransaction(
@@ -200,7 +324,8 @@ public final class JdbcFraudCaseLifecycleStore implements FraudCaseLifecycleStor
                 rs.getString("merchant_id"),
                 instant(rs, "occurred_at"),
                 instant(rs, "created_at"),
-                instant(rs, "updated_at"));
+                instant(rs, "updated_at"),
+                nullableResolutionOutcome(rs.getString("resolution_outcome")));
     }
 
     private static FraudCase mapCase(ResultSet rs, List<FraudRuleSnapshot> rules) throws SQLException {
@@ -230,6 +355,10 @@ public final class JdbcFraudCaseLifecycleStore implements FraudCaseLifecycleStor
                 rs.getBoolean("case_required"),
                 instant(rs, "created_at"),
                 instant(rs, "updated_at"),
+                nullableResolutionOutcome(rs.getString("resolution_outcome")),
+                rs.getString("resolution_rationale"),
+                nullableInstant(rs, "resolved_at"),
+                rs.getString("resolved_by"),
                 rules);
     }
 
@@ -241,6 +370,15 @@ public final class JdbcFraudCaseLifecycleStore implements FraudCaseLifecycleStor
 
     private static Instant instant(ResultSet rs, String column) throws SQLException {
         return rs.getObject(column, OffsetDateTime.class).toInstant();
+    }
+
+    private static Instant nullableInstant(ResultSet rs, String column) throws SQLException {
+        OffsetDateTime value = rs.getObject(column, OffsetDateTime.class);
+        return value == null ? null : value.toInstant();
+    }
+
+    private static FraudCaseResolutionOutcome nullableResolutionOutcome(String value) {
+        return value == null ? null : FraudCaseResolutionOutcome.valueOf(value);
     }
 
     private static OffsetDateTime databaseTimestamp(Instant instant) {
