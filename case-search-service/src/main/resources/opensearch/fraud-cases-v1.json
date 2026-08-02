@@ -1,0 +1,23 @@
+{
+  "settings": { "index.number_of_shards": 1, "index.number_of_replicas": 0 },
+  "mappings": {
+    "dynamic": "strict",
+    "properties": {
+      "caseId": { "type": "keyword" }, "requestId": { "type": "keyword" },
+      "status": { "type": "keyword" }, "assigneeId": { "type": "keyword" },
+      "aggregateVersion": { "type": "long" }, "snapshotHash": { "type": "keyword" },
+      "authorizationOccurredAt": { "type": "date" }, "merchantId": { "type": "keyword" },
+      "merchantCategoryCode": { "type": "keyword" }, "amount": { "type": "scaled_float", "scaling_factor": 100 },
+      "currency": { "type": "keyword" }, "country": { "type": "keyword" }, "channel": { "type": "keyword" },
+      "transactionTime": { "type": "date" }, "nonFraudResult": { "type": "keyword" },
+      "authorizationDecision": { "type": "keyword" }, "declineReason": { "type": "keyword" },
+      "fraudAssessment": { "type": "keyword" }, "riskScore": { "type": "integer" },
+      "caseRequired": { "type": "boolean" }, "createdAt": { "type": "date" }, "updatedAt": { "type": "date" },
+      "matchedRules": { "type": "nested", "properties": {
+        "ruleCode": { "type": "keyword" }, "severity": { "type": "keyword" },
+        "evidence": { "type": "text" }, "scoreContribution": { "type": "integer" } } },
+      "resolutionOutcome": { "type": "keyword" }, "resolutionRationale": { "type": "text" },
+      "resolvedBy": { "type": "keyword" }, "resolvedAt": { "type": "date" }
+    }
+  }
+}

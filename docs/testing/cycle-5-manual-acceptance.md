@@ -48,3 +48,9 @@ conflicts are published to `transactiq.authorization.completed.v1.dlt` on the sa
 Inspect DLT headers and confirm the original bytes are unchanged; exception messages, causes, and
 stack traces must not be present. A successful DLT send unblocks the next record. An unavailable or
 mispartitioned DLT must leave the source offset uncommitted and retry recovery with a positive delay.
+
+## Increment 5A projection observation
+
+PostgreSQL, Kafka, and OpenSearch Testcontainers tests are authoritative. The compacted main topic
+is `transactiq.fraud-case.projection.v1`; its ordinary-retention DLT appends `.dlt`. PostgreSQL
+details remain authoritative while OpenSearch catches up. No search endpoint exists in 5A.

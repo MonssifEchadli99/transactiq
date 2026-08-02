@@ -5,6 +5,7 @@ import io.github.monssifechadli99.transactiq.case_management.domain.Authorizatio
 import io.github.monssifechadli99.transactiq.case_management.domain.AuthorizationEventSnapshot;
 import io.github.monssifechadli99.transactiq.case_management.domain.FraudCaseStatus;
 import io.github.monssifechadli99.transactiq.case_management.domain.FraudRuleSnapshot;
+import io.github.monssifechadli99.transactiq.case_management.projection.FraudCaseProjectionOutbox;
 import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -21,18 +22,21 @@ public final class JdbcFraudCaseStore implements FraudCaseStore {
     private final TransactionOperations transactionOperations;
     private final Clock clock;
     private final Supplier<UUID> caseIdSupplier;
+    private final FraudCaseProjectionOutbox projectionOutbox;
 
     public JdbcFraudCaseStore(
             JdbcClient jdbcClient,
             TransactionOperations transactionOperations,
             Clock clock,
-            Supplier<UUID> caseIdSupplier) {
+            Supplier<UUID> caseIdSupplier,
+            FraudCaseProjectionOutbox projectionOutbox) {
         this.jdbcClient = Objects.requireNonNull(jdbcClient, "jdbcClient must not be null");
         this.transactionOperations = Objects.requireNonNull(
                 transactionOperations, "transactionOperations must not be null");
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
         this.caseIdSupplier = Objects.requireNonNull(
                 caseIdSupplier, "caseIdSupplier must not be null");
+        this.projectionOutbox = Objects.requireNonNull(projectionOutbox, "projectionOutbox must not be null");
     }
 
     @Override
@@ -134,6 +138,7 @@ public final class JdbcFraudCaseStore implements FraudCaseStore {
 
         if (inserted == 1) {
             insertRuleSnapshots(caseId, event.matchedRules());
+            projectionOutbox.appendCreated(caseId, event, createdAt.toInstant());
             return CreationResult.CREATED;
         }
         return resolveExisting(event);

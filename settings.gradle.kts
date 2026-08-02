@@ -12,6 +12,8 @@ rootProject.name = "transactiq"
 
 include("authorization-service")
 include("case-management-service")
+include("case-projection-contract")
+include("case-search-service")
 include("event-contract")
 include("fraud-contract")
 include("fraud-engine")

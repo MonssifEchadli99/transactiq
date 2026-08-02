@@ -1,5 +1,8 @@
 package io.github.monssifechadli99.transactiq.case_management.adapter.out.jdbc;
 
+import io.github.monssifechadli99.transactiq.case_management.projection.FraudCaseProjectionMapper;
+import io.github.monssifechadli99.transactiq.case_management.projection.FraudCaseProjectionOutbox;
+
 import static io.github.monssifechadli99.transactiq.case_management.support.AuthorizationEventFixtures.reviewEvent;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -115,6 +118,8 @@ class JdbcFraudCaseLifecycleStoreIntegrationTest {
         assertEquals(1, retry.fraudCase().version());
         assertEquals(CLAIMED, retry.fraudCase().updatedAt());
         assertEquals(1, auditCount(caseId));
+        assertEquals(2, projectionCount(caseId));
+        assertEquals("CLAIMED", projectionType(caseId, 1));
     }
 
     @Test
@@ -188,6 +193,78 @@ class JdbcFraudCaseLifecycleStoreIntegrationTest {
     }
 
     @Test
+    void projectionOutboxFailureRollsBackClaimAndAudit() {
+        UUID caseId = UUID.randomUUID();
+        create(caseId, UUID.randomUUID(), CREATED);
+        jdbc.sql("""
+                CREATE FUNCTION fraud_case.reject_projection_event() RETURNS trigger AS $$
+                BEGIN IF NEW.aggregate_version > 0 THEN RAISE EXCEPTION 'synthetic projection failure'; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql
+                """).update();
+        jdbc.sql("""
+                CREATE TRIGGER reject_projection_event BEFORE INSERT
+                ON fraud_case.fraud_case_projection_outbox
+                FOR EACH ROW EXECUTE FUNCTION fraud_case.reject_projection_event()
+                """).update();
+        try {
+            assertThrows(RuntimeException.class, () -> lifecycle.claim(caseId, "analyst-a", 0));
+            var unchanged=lifecycle.findById(caseId).orElseThrow();
+            assertEquals(FraudCaseStatus.NEW,unchanged.status());
+            assertEquals(0,unchanged.version());
+            assertEquals(0,auditCount(caseId));
+            assertEquals(1,projectionCount(caseId));
+        } finally {
+            jdbc.sql("DROP TRIGGER reject_projection_event ON fraud_case.fraud_case_projection_outbox").update();
+            jdbc.sql("DROP FUNCTION fraud_case.reject_projection_event()").update();
+        }
+    }
+
+    @Test
+    void projectionOutboxFailureRollsBackResolutionAndAudit() {
+        UUID caseId = UUID.randomUUID();
+        create(caseId, UUID.randomUUID(), CREATED);
+        lifecycle.claim(caseId, "analyst-a", 0);
+        jdbc.sql("""
+                CREATE FUNCTION fraud_case.reject_resolved_projection() RETURNS trigger AS $$
+                BEGIN IF NEW.aggregate_version = 2 THEN RAISE EXCEPTION 'synthetic projection failure'; END IF;
+                RETURN NEW; END; $$ LANGUAGE plpgsql
+                """).update();
+        jdbc.sql("""
+                CREATE TRIGGER reject_resolved_projection BEFORE INSERT
+                ON fraud_case.fraud_case_projection_outbox
+                FOR EACH ROW EXECUTE FUNCTION fraud_case.reject_resolved_projection()
+                """).update();
+        try {
+            assertThrows(RuntimeException.class, () -> lifecycleStore(RESOLVED).resolve(
+                    caseId,"analyst-a",1,FraudCaseResolutionOutcome.CONFIRMED_FRAUD,"Synthetic rationale"));
+            var unchanged=lifecycle.findById(caseId).orElseThrow();
+            assertEquals(FraudCaseStatus.IN_REVIEW,unchanged.status());
+            assertEquals(1,unchanged.version());
+            assertNull(unchanged.resolutionOutcome());
+            assertEquals(1,auditCount(caseId));
+            assertEquals(2,projectionCount(caseId));
+        } finally {
+            jdbc.sql("DROP TRIGGER reject_resolved_projection ON fraud_case.fraud_case_projection_outbox").update();
+            jdbc.sql("DROP FUNCTION fraud_case.reject_resolved_projection()").update();
+        }
+    }
+
+    @Test
+    void completeBusinessPathPersistsWithoutAnyOpenSearchBoundary() {
+        UUID caseId=UUID.randomUUID();
+        create(caseId,UUID.randomUUID(),CREATED);
+        lifecycle.claim(caseId,"analyst-a",0);
+        lifecycleStore(RESOLVED).resolve(caseId,"analyst-a",1,
+                FraudCaseResolutionOutcome.FALSE_POSITIVE,"Synthetic isolation rationale");
+        var resolved=lifecycle.findById(caseId).orElseThrow();
+        assertEquals(FraudCaseStatus.RESOLVED,resolved.status());
+        assertEquals(2,resolved.version());
+        assertEquals(2,auditCount(caseId));
+        assertEquals(3,projectionCount(caseId));
+        assertTrue(java.util.Arrays.stream(JdbcFraudCaseLifecycleStore.class.getDeclaredFields())
+                .noneMatch(field -> field.getType().getName().toLowerCase().contains("opensearch")));
+    }
+
+    @Test
     void duplicateKafkaCreationAfterClaimPreservesLifecycleAndSnapshot() {
         UUID caseId = UUID.randomUUID();
         UUID requestId = UUID.randomUUID();
@@ -240,6 +317,8 @@ class JdbcFraudCaseLifecycleStoreIntegrationTest {
         assertEquals(FraudCaseResolutionOutcome.CONFIRMED_FRAUD,
                 history.getLast().resolutionOutcome());
         assertEquals(2, auditCount(caseId));
+        assertEquals(3, projectionCount(caseId));
+        assertEquals("RESOLVED", projectionType(caseId, 2));
         assertTrue(resolving.findHistory(UUID.randomUUID()).isEmpty());
     }
 
@@ -369,13 +448,17 @@ class JdbcFraudCaseLifecycleStoreIntegrationTest {
     private JdbcFraudCaseStore creationStore(
             Instant instant, java.util.function.Supplier<UUID> ids) {
         return new JdbcFraudCaseStore(jdbc, new TransactionTemplate(transactionManager),
-                Clock.fixed(instant, ZoneOffset.UTC), ids);
+                Clock.fixed(instant, ZoneOffset.UTC), ids, projectionOutbox());
     }
 
     private JdbcFraudCaseLifecycleStore lifecycleStore(Instant instant) {
         return new JdbcFraudCaseLifecycleStore(jdbc, new TransactionTemplate(transactionManager),
                 Clock.fixed(instant, ZoneOffset.UTC), UUID::randomUUID,
-                new FraudCaseClaimPolicy(), new FraudCaseResolutionPolicy());
+                new FraudCaseClaimPolicy(), new FraudCaseResolutionPolicy(), projectionOutbox());
+    }
+
+    private FraudCaseProjectionOutbox projectionOutbox() {
+        return new FraudCaseProjectionOutbox(jdbc, new FraudCaseProjectionMapper(), UUID::randomUUID);
     }
 
     private int auditCount(UUID caseId) {
@@ -383,6 +466,16 @@ class JdbcFraudCaseLifecycleStoreIntegrationTest {
                 SELECT count(*) FROM fraud_case.fraud_case_lifecycle_events
                 WHERE fraud_case_id = :caseId
                 """).param("caseId", caseId).query(Integer.class).single();
+    }
+
+    private int projectionCount(UUID caseId) {
+        return jdbc.sql("SELECT count(*) FROM fraud_case.fraud_case_projection_outbox WHERE fraud_case_id=:id")
+                .param("id",caseId).query(Integer.class).single();
+    }
+
+    private String projectionType(UUID caseId,long version) {
+        return jdbc.sql("SELECT event_type FROM fraud_case.fraud_case_projection_outbox WHERE fraud_case_id=:id AND aggregate_version=:version")
+                .param("id",caseId).param("version",version).query(String.class).single();
     }
 
     private static FraudCaseQuery query(

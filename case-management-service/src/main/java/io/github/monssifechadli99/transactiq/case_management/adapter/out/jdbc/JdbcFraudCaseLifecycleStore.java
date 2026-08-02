@@ -20,6 +20,8 @@ import io.github.monssifechadli99.transactiq.case_management.domain.FraudRuleSev
 import io.github.monssifechadli99.transactiq.case_management.domain.FraudRuleSnapshot;
 import io.github.monssifechadli99.transactiq.case_management.domain.NonFraudResult;
 import io.github.monssifechadli99.transactiq.case_management.domain.TransactionChannel;
+import io.github.monssifechadli99.transactiq.case_management.projection.FraudCaseProjectionOutbox;
+import io.github.monssifechadli99.transactiq.case_management.projection.FraudCaseProjectionType;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Clock;
@@ -42,6 +44,7 @@ public final class JdbcFraudCaseLifecycleStore implements FraudCaseLifecycleStor
     private final Supplier<UUID> lifecycleEventIdSupplier;
     private final FraudCaseClaimPolicy claimPolicy;
     private final FraudCaseResolutionPolicy resolutionPolicy;
+    private final FraudCaseProjectionOutbox projectionOutbox;
 
     public JdbcFraudCaseLifecycleStore(
             JdbcClient jdbcClient,
@@ -49,13 +52,15 @@ public final class JdbcFraudCaseLifecycleStore implements FraudCaseLifecycleStor
             Clock clock,
             Supplier<UUID> lifecycleEventIdSupplier,
             FraudCaseClaimPolicy claimPolicy,
-            FraudCaseResolutionPolicy resolutionPolicy) {
+            FraudCaseResolutionPolicy resolutionPolicy,
+            FraudCaseProjectionOutbox projectionOutbox) {
         this.jdbcClient = jdbcClient;
         this.transactions = transactions;
         this.clock = clock;
         this.lifecycleEventIdSupplier = lifecycleEventIdSupplier;
         this.claimPolicy = claimPolicy;
         this.resolutionPolicy = resolutionPolicy;
+        this.projectionOutbox = projectionOutbox;
     }
 
     @Override
@@ -174,8 +179,9 @@ public final class JdbcFraudCaseLifecycleStore implements FraudCaseLifecycleStor
             if (inserted != 1) {
                 throw new IllegalStateException("Expected one resolution event to be inserted");
             }
-            return new FraudCaseResolutionResult(
-                    FraudCaseResolutionResult.Outcome.RESOLVED, requiredCase(caseId));
+            FraudCase resulting = requiredCase(caseId);
+            projectionOutbox.append(resulting, FraudCaseProjectionType.RESOLVED);
+            return new FraudCaseResolutionResult(FraudCaseResolutionResult.Outcome.RESOLVED, resulting);
         }
 
         Optional<FraudCase> existing = findById(caseId);
@@ -271,7 +277,9 @@ public final class JdbcFraudCaseLifecycleStore implements FraudCaseLifecycleStor
             if (inserted != 1) {
                 throw new IllegalStateException("Expected one lifecycle event to be inserted");
             }
-            return new FraudCaseClaimResult(Outcome.CLAIMED, requiredCase(caseId));
+            FraudCase resulting = requiredCase(caseId);
+            projectionOutbox.append(resulting, FraudCaseProjectionType.CLAIMED);
+            return new FraudCaseClaimResult(Outcome.CLAIMED, resulting);
         }
 
         Optional<FraudCase> existing = findById(caseId);

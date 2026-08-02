@@ -1,0 +1,55 @@
+syntax = "proto3";
+package transactiq.fraudcase.projection.v1;
+option java_package = "io.github.monssifechadli99.transactiq.fraudcase.projection.v1";
+option java_outer_classname = "FraudCaseProjectionV1";
+import "google/protobuf/timestamp.proto";
+
+enum FraudCaseProjectionEventType {
+  FRAUD_CASE_PROJECTION_EVENT_TYPE_UNSPECIFIED = 0;
+  CREATED = 1;
+  CLAIMED = 2;
+  RESOLVED = 3;
+}
+message FraudRuleEvidence {
+  string rule_code = 1;
+  string severity = 2;
+  string evidence = 3;
+  int32 score_contribution = 4;
+}
+message FraudCaseProjectionSnapshot {
+  string case_id = 1;
+  string request_id = 2;
+  string status = 3;
+  optional string assignee_id = 4;
+  int64 aggregate_version = 5;
+  google.protobuf.Timestamp authorization_occurred_at = 6;
+  string merchant_id = 7;
+  string merchant_category_code = 8;
+  string amount = 9;
+  string currency = 10;
+  string country = 11;
+  string channel = 12;
+  google.protobuf.Timestamp transaction_time = 13;
+  string non_fraud_result = 14;
+  string authorization_decision = 15;
+  optional string decline_reason = 16;
+  string fraud_assessment = 17;
+  int32 risk_score = 18;
+  bool case_required = 19;
+  google.protobuf.Timestamp created_at = 20;
+  google.protobuf.Timestamp updated_at = 21;
+  repeated FraudRuleEvidence matched_rules = 22;
+  optional string resolution_outcome = 23;
+  optional string resolution_rationale = 24;
+  optional string resolved_by = 25;
+  optional google.protobuf.Timestamp resolved_at = 26;
+}
+message FraudCaseProjectionEvent {
+  string event_id = 1;
+  FraudCaseProjectionEventType event_type = 2;
+  string case_id = 3;
+  int64 aggregate_version = 4;
+  google.protobuf.Timestamp occurred_at = 5;
+  string snapshot_hash = 6;
+  FraudCaseProjectionSnapshot snapshot = 7;
+}

@@ -16,6 +16,15 @@ import io.github.monssifechadli99.transactiq.case_management.application.service
 import io.github.monssifechadli99.transactiq.case_management.application.service.FraudCaseLifecycleService;
 import io.github.monssifechadli99.transactiq.case_management.domain.FraudCaseClaimPolicy;
 import io.github.monssifechadli99.transactiq.case_management.domain.FraudCaseResolutionPolicy;
+import io.github.monssifechadli99.transactiq.case_management.projection.FraudCaseProjectionMapper;
+import io.github.monssifechadli99.transactiq.case_management.projection.FraudCaseProjectionOutbox;
+import io.github.monssifechadli99.transactiq.case_management.projection.FraudCaseProjectionRelay;
+import io.github.monssifechadli99.transactiq.case_management.projection.FraudCaseProjectionScheduler;
+import io.github.monssifechadli99.transactiq.case_management.projection.JdbcProjectionDeliveryStore;
+import io.github.monssifechadli99.transactiq.case_management.projection.FraudCaseProjectionBootstrap;
+import io.github.monssifechadli99.transactiq.case_management.projection.FraudCaseProjectionBootstrapRunner;
+import io.github.monssifechadli99.transactiq.case_management.projection.KafkaProjectionTransactionalProducerFactory;
+import io.github.monssifechadli99.transactiq.case_management.projection.ProjectionTransactionalProducerFactory;
 import java.time.Clock;
 import java.util.UUID;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -26,14 +35,21 @@ import org.springframework.kafka.annotation.EnableKafka;
 import org.springframework.kafka.config.TopicBuilder;
 import org.springframework.kafka.core.KafkaAdmin;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.core.ProducerFactory;
 import org.springframework.kafka.listener.DefaultErrorHandler;
 import org.springframework.kafka.listener.DeadLetterPublishingRecoverer.HeaderNames.HeadersToAdd;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.scheduling.annotation.EnableScheduling;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
+import org.springframework.context.ConfigurableApplicationContext;
+import org.apache.kafka.common.config.TopicConfig;
 
 @Configuration(proxyBeanMethods = false)
 @EnableKafka
-@EnableConfigurationProperties(FraudCaseConsumerProperties.class)
+@EnableScheduling
+@EnableConfigurationProperties({FraudCaseConsumerProperties.class, FraudCaseProjectionProperties.class})
 public class FraudCaseConfiguration {
 
     @Bean
@@ -50,12 +66,14 @@ public class FraudCaseConfiguration {
     JdbcFraudCaseStore fraudCaseStore(
             JdbcClient jdbcClient,
             PlatformTransactionManager transactionManager,
-            Clock fraudCaseClock) {
+            Clock fraudCaseClock,
+            FraudCaseProjectionOutbox projectionOutbox) {
         return new JdbcFraudCaseStore(
                 jdbcClient,
                 new TransactionTemplate(transactionManager),
                 fraudCaseClock,
-                UUID::randomUUID);
+                UUID::randomUUID,
+                projectionOutbox);
     }
 
     @Bean
@@ -69,14 +87,61 @@ public class FraudCaseConfiguration {
             PlatformTransactionManager transactionManager,
             Clock fraudCaseClock,
             FraudCaseClaimPolicy claimPolicy,
-            FraudCaseResolutionPolicy resolutionPolicy) {
+            FraudCaseResolutionPolicy resolutionPolicy,
+            FraudCaseProjectionOutbox projectionOutbox) {
         return new JdbcFraudCaseLifecycleStore(
                 jdbcClient,
                 new TransactionTemplate(transactionManager),
                 fraudCaseClock,
                 UUID::randomUUID,
                 claimPolicy,
-                resolutionPolicy);
+                resolutionPolicy,
+                projectionOutbox);
+    }
+
+    @Bean FraudCaseProjectionMapper fraudCaseProjectionMapper() { return new FraudCaseProjectionMapper(); }
+
+    @Bean FraudCaseProjectionOutbox fraudCaseProjectionOutbox(
+            JdbcClient jdbcClient, FraudCaseProjectionMapper mapper) {
+        return new FraudCaseProjectionOutbox(jdbcClient, mapper, UUID::randomUUID);
+    }
+
+    @Bean JdbcProjectionDeliveryStore jdbcProjectionDeliveryStore(
+            JdbcClient jdbcClient, PlatformTransactionManager transactionManager) {
+        return new JdbcProjectionDeliveryStore(jdbcClient, new TransactionTemplate(transactionManager));
+    }
+
+    @Bean ProjectionTransactionalProducerFactory projectionTransactionalProducerFactory(
+            ProducerFactory<Object,Object> producerFactory, FraudCaseProjectionProperties properties) {
+        return new KafkaProjectionTransactionalProducerFactory(
+                producerFactory.getConfigurationProperties(), properties.producerOperationTimeout());
+    }
+
+    @Bean FraudCaseProjectionRelay fraudCaseProjectionRelay(
+            JdbcProjectionDeliveryStore store, ProjectionTransactionalProducerFactory producers,
+            FraudCaseProjectionProperties properties, Clock fraudCaseClock) {
+        return new FraudCaseProjectionRelay(store, producers, properties, fraudCaseClock);
+    }
+
+    @Bean
+    @ConditionalOnExpression("'${spring.kafka.listener.auto-startup:true}' == 'true' and '${fraud-case.projection.bootstrap-enabled:false}' == 'false'")
+    FraudCaseProjectionScheduler fraudCaseProjectionScheduler(FraudCaseProjectionRelay relay) {
+        return new FraudCaseProjectionScheduler(relay);
+    }
+
+    @Bean
+    @ConditionalOnProperty(name="fraud-case.projection.bootstrap-enabled",havingValue="true")
+    FraudCaseProjectionBootstrap fraudCaseProjectionBootstrap(
+            JdbcClient jdbcClient, JdbcFraudCaseLifecycleStore cases,
+            FraudCaseProjectionOutbox outbox, FraudCaseProjectionProperties properties) {
+        return new FraudCaseProjectionBootstrap(jdbcClient,cases,outbox,properties.bootstrapBatchSize());
+    }
+
+    @Bean
+    @ConditionalOnProperty(name="fraud-case.projection.bootstrap-enabled",havingValue="true")
+    FraudCaseProjectionBootstrapRunner fraudCaseProjectionBootstrapRunner(
+            FraudCaseProjectionBootstrap bootstrap, ConfigurableApplicationContext context) {
+        return new FraudCaseProjectionBootstrapRunner(bootstrap, context);
     }
 
     @Bean
@@ -113,11 +178,14 @@ public class FraudCaseConfiguration {
     }
 
     @Bean
-    KafkaAdmin.NewTopics fraudCaseTopics(FraudCaseConsumerProperties properties) {
-        return new KafkaAdmin.NewTopics(TopicBuilder.name(properties.dltTopic())
-                .partitions(properties.topicPartitions())
-                .replicas(1)
-                .build());
+    KafkaAdmin.NewTopics fraudCaseTopics(
+            FraudCaseConsumerProperties properties, FraudCaseProjectionProperties projection) {
+        return new KafkaAdmin.NewTopics(
+                TopicBuilder.name(properties.dltTopic()).partitions(properties.topicPartitions()).replicas(1).build(),
+                TopicBuilder.name(projection.topic()).partitions(projection.topicPartitions()).replicas(1)
+                        .config(TopicConfig.CLEANUP_POLICY_CONFIG, TopicConfig.CLEANUP_POLICY_COMPACT).build(),
+                TopicBuilder.name(projection.topic()+".dlt").partitions(projection.topicPartitions()).replicas(1)
+                        .config(TopicConfig.CLEANUP_POLICY_CONFIG, TopicConfig.CLEANUP_POLICY_DELETE).build());
     }
 
     @Bean

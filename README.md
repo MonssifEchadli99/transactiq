@@ -23,7 +23,9 @@ Current modules:
 - `authorization-service`: HTTP authorization workflow, PostgreSQL ledger/reservations, outbox,
   fraud gRPC client, and Kafka outbox relay.
 - `case-management-service`: idempotent Kafka consumer, immutable PostgreSQL fraud-case snapshots,
-  bounded failure recovery, and analyst queue/detail/claim/resolve/history HTTP APIs.
+  bounded failure recovery, analyst APIs, and a transactional Fraud Case projection outbox.
+- `case-projection-contract`: versioned full-snapshot Fraud Case projection Protobuf contract.
+- `case-search-service`: internal Kotlin Kafka-to-OpenSearch indexer; it exposes no search API.
 - `fraud-contract`: versioned fraud-assessment gRPC contract.
 - `fraud-engine`: deterministic synthetic stateless and velocity fraud rules backed by Redis.
 - `event-contract`: versioned authorization-completed Protobuf contract.
@@ -74,6 +76,8 @@ steps. The [authorization and event acceptance guide](docs/testing/cycle-3-manua
 shows how to inspect PostgreSQL, the outbox, and Kafka separately.
 Case-consumer recovery operations are documented in
 [the Kafka recovery runbook](docs/operations/case-management-kafka-recovery.md).
+Fraud Case projection recovery is documented in
+[the projection runbook](docs/operations/fraud-case-projection-recovery.md).
 
 ## Build
 

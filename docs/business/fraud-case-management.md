@@ -72,8 +72,17 @@ rationale match and the stored version is exactly the requested predecessor vers
 Different resolution data conflicts. History returns persisted `CLAIMED` then `RESOLVED` events in
 case-version order; a new case has empty history and no invented `CREATED` event.
 
+## OpenSearch projection
+
+PostgreSQL remains authoritative. Successful creation, claim, and resolution transactions append
+a full `CREATED`, `CLAIMED`, or `RESOLVED` snapshot to a dedicated transactional outbox. OpenSearch
+is an eventually consistent read projection and is never called by case business operations.
+
+The projection excludes raw card tokens, card-token fingerprints, source-event hashes, Kafka
+bytes/headers, credentials, and infrastructure secrets. Increment 5A exposes no search endpoint.
+
 ## Explicit exclusions
 
 This increment has no reopen, release, reassignment, general notes, real identity/security, gateway
 route, lifecycle Kafka event, transaction action, refund, case grouping, priority, resolution
-outcome filter, OpenSearch projection, DLT replay tooling, or AI/RAG behavior.
+outcome filter, DLT replay tooling, or AI/RAG behavior.

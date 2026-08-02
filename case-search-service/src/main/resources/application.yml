@@ -1,0 +1,31 @@
+spring:
+  application:
+    name: case-search-service
+  main:
+    web-application-type: none
+  kafka:
+    bootstrap-servers: "${TRANSACTIQ_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}"
+    consumer:
+      group-id: "transactiq-case-search-v1"
+      enable-auto-commit: false
+      auto-offset-reset: earliest
+      isolation-level: read_committed
+      key-deserializer: org.apache.kafka.common.serialization.ByteArrayDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.ByteArrayDeserializer
+    listener:
+      ack-mode: record
+    producer:
+      acks: all
+      key-serializer: org.apache.kafka.common.serialization.ByteArraySerializer
+      value-serializer: org.apache.kafka.common.serialization.ByteArraySerializer
+case-search:
+  topic: "transactiq.fraud-case.projection.v1"
+  dlt-topic: "transactiq.fraud-case.projection.v1.dlt"
+  topic-partitions: 1
+  retry-interval: 1s
+  retry-attempts: 5
+  opensearch-url: "${TRANSACTIQ_OPENSEARCH_URL:http://localhost:9200}"
+  opensearch-request-timeout: 2s
+  physical-index: "${TRANSACTIQ_FRAUD_CASE_INDEX:transactiq-fraud-cases-v1}"
+  read-alias: "${TRANSACTIQ_FRAUD_CASE_READ_ALIAS:transactiq-fraud-cases}"
+  write-alias: "${TRANSACTIQ_FRAUD_CASE_WRITE_ALIAS:transactiq-fraud-cases-write}"

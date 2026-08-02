@@ -78,6 +78,28 @@ services:
       timeout: 5s
       retries: 10
 
+  opensearch:
+    image: opensearchproject/opensearch:3.2.0
+    environment:
+      discovery.type: single-node
+      bootstrap.memory_lock: "true"
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+      DISABLE_SECURITY_PLUGIN: "true" # Local development only; not production security.
+    ports:
+      - "127.0.0.1:${TRANSACTIQ_OPENSEARCH_PORT:-9200}:9200"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - transactiq_fraud_case_opensearch_data:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl --silent --fail http://localhost:9200/_cluster/health >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
 volumes:
   transactiq_authorization_postgres_data:
   transactiq_case_management_postgres_data:
+  transactiq_fraud_case_opensearch_data:

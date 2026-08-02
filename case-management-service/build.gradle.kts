@@ -12,6 +12,7 @@ java {
 
 dependencies {
     implementation(project(":event-contract"))
+    implementation(project(":case-projection-contract"))
     implementation("com.google.protobuf:protobuf-java-util:3.25.8")
     implementation("org.springframework.boot:spring-boot-starter-jdbc")
     implementation("org.springframework.boot:spring-boot-starter-web")
@@ -22,6 +23,7 @@ dependencies {
     runtimeOnly("org.postgresql:postgresql")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
+    testImplementation(project(":case-search-service"))
     testImplementation("org.springframework.boot:spring-boot-testcontainers")
     testImplementation("org.testcontainers:testcontainers-junit-jupiter")
     testImplementation("org.testcontainers:testcontainers-kafka")

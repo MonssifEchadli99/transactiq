@@ -12,6 +12,8 @@ import io.github.monssifechadli99.transactiq.case_management.application.port.ou
 import io.github.monssifechadli99.transactiq.case_management.domain.AuthorizationEventConflictException;
 import io.github.monssifechadli99.transactiq.case_management.domain.AuthorizationEventSnapshot;
 import io.github.monssifechadli99.transactiq.case_management.domain.FraudRuleSnapshot;
+import io.github.monssifechadli99.transactiq.case_management.projection.FraudCaseProjectionMapper;
+import io.github.monssifechadli99.transactiq.case_management.projection.FraudCaseProjectionOutbox;
 import io.github.monssifechadli99.transactiq.case_management.support.PostgreSqlTestcontainersConfiguration;
 import java.time.Clock;
 import java.time.Instant;
@@ -58,7 +60,8 @@ class JdbcFraudCaseStoreIntegrationTest {
                 jdbcClient,
                 new TransactionTemplate(transactionManager),
                 Clock.fixed(CREATED_AT, ZoneOffset.UTC),
-                UUID::randomUUID);
+                UUID::randomUUID,
+                new FraudCaseProjectionOutbox(jdbcClient, new FraudCaseProjectionMapper(), UUID::randomUUID));
     }
 
     @Test
@@ -92,6 +95,8 @@ class JdbcFraudCaseStoreIntegrationTest {
         assertEquals(event.occurredAt(), persisted.occurredAt());
         assertEquals(event.transactionTime(), persisted.transactionTime());
         assertEquals(CREATED_AT, persisted.createdAt());
+        assertEquals(1, projectionCount(persisted.caseId()));
+        assertEquals("CREATED", projectionType(persisted.caseId(), 0));
         assertEquals(
                 List.of(new PersistedRule(
                         0,
@@ -136,6 +141,17 @@ class JdbcFraudCaseStoreIntegrationTest {
 
         assertEquals(1, caseCount());
         assertEquals(1, ruleCount());
+        assertEquals(1, projectionCount(persistedCase(event.requestId()).caseId()));
+    }
+
+    private int projectionCount(UUID caseId) {
+        return jdbcClient.sql("SELECT count(*) FROM fraud_case.fraud_case_projection_outbox WHERE fraud_case_id=:id")
+                .param("id",caseId).query(Integer.class).single();
+    }
+
+    private String projectionType(UUID caseId,long version) {
+        return jdbcClient.sql("SELECT event_type FROM fraud_case.fraud_case_projection_outbox WHERE fraud_case_id=:id AND aggregate_version=:version")
+                .param("id",caseId).param("version",version).query(String.class).single();
     }
 
     @Test
@@ -245,6 +261,31 @@ class JdbcFraudCaseStoreIntegrationTest {
 
         assertEquals(0, caseCount());
         assertEquals(0, ruleCount());
+    }
+
+    @Test
+    void projectionOutboxInsertFailureRollsBackCreationAndRules() {
+        AuthorizationEventSnapshot event = parsed(reviewEvent(UUID.randomUUID(), UUID.randomUUID())
+                .build().toByteArray());
+        jdbcClient.sql("""
+                CREATE FUNCTION fraud_case.reject_created_projection() RETURNS trigger AS $$
+                BEGIN RAISE EXCEPTION 'synthetic projection failure'; END; $$ LANGUAGE plpgsql
+                """).update();
+        jdbcClient.sql("""
+                CREATE TRIGGER reject_created_projection BEFORE INSERT
+                ON fraud_case.fraud_case_projection_outbox
+                FOR EACH ROW EXECUTE FUNCTION fraud_case.reject_created_projection()
+                """).update();
+        try {
+            assertThrows(RuntimeException.class, () -> store.create(event));
+            assertEquals(0, caseCount());
+            assertEquals(0, ruleCount());
+            assertEquals(0, jdbcClient.sql("SELECT count(*) FROM fraud_case.fraud_case_projection_outbox")
+                    .query(Integer.class).single());
+        } finally {
+            jdbcClient.sql("DROP TRIGGER reject_created_projection ON fraud_case.fraud_case_projection_outbox").update();
+            jdbcClient.sql("DROP FUNCTION fraud_case.reject_created_projection()").update();
+        }
     }
 
     private AuthorizationEventSnapshot parsed(byte[] bytes) {

@@ -24,6 +24,18 @@ spring:
         enable.idempotence: true
 
 fraud-case:
+  projection:
+    topic: "transactiq.fraud-case.projection.v1"
+    topic-partitions: 1
+    batch-size: 50
+    poll-interval: 1s
+    lease-duration: 30s
+    retry-initial-backoff: 1s
+    retry-maximum-backoff: 30s
+    bootstrap-enabled: false
+    bootstrap-batch-size: 100
+    environment: "${TRANSACTIQ_ENVIRONMENT:local}"
+    producer-operation-timeout: 10s
   consumer:
     topic: "transactiq.authorization.completed.v1"
     group-id: "transactiq-case-management-v1"

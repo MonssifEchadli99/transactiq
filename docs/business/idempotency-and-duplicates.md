@@ -141,3 +141,28 @@ commands may both succeed but only one mutates; conflicting commands have one wi
 
 Duplicate Kafka creation after resolution remains a no-op and cannot reset the resolution summary,
 status, assignee, version, timestamps, immutable fraud evidence, or lifecycle history.
+
+## Fraud Case projection delivery
+
+The projection outbox is unique by `(caseId, aggregateVersion)`. Kafka delivery is at least once.
+OpenSearch uses case ID as document ID: higher full snapshots replace atomically, older versions and
+same-hash duplicates are no-ops, and same-version/different-hash input preserves the document and
+reaches the projection DLT. Version gaps are accepted because events are complete snapshots.
+The relay enforces per-case head-of-line publication: a higher aggregate version cannot be claimed
+until every lower version is durably `PUBLISHED`. This prevents a stale record from becoming the
+last physical record retained by Kafka compaction during a rebuild.
+
+PostgreSQL elects one publication owner per topic partition using a database-time lease and
+generation. The owner initializes a dedicated transactional Kafka producer with the exact stable
+identity `<environment>.<topic>.p<partition>`; Kafka's producer epoch fences a delayed former owner.
+Each outbox row is one Kafka transaction, and projection consumers use `read_committed`. A Kafka
+commit followed by a failed PostgreSQL mark can therefore produce a same-version duplicate, but
+committed-visible versions for one case never decrease. Delivery remains at least once; PostgreSQL
+and Kafka are not one atomic distributed transaction.
+The local-development discriminator defaults to `local`; deployments configure their own stable
+environment value through `TRANSACTIQ_ENVIRONMENT`.
+
+Increment 5A uses one projection partition, so relay publication is serialized while PostgreSQL
+business transactions remain concurrent. Increasing the partition count requires an explicit
+migration and design decision. OpenSearch is outside the Case Management transaction boundary, and
+Increment 5A exposes no public search endpoint.
