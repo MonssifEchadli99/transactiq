@@ -1,8 +1,6 @@
 spring:
   application:
     name: case-search-service
-  main:
-    web-application-type: none
   kafka:
     bootstrap-servers: "${TRANSACTIQ_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}"
     consumer:
@@ -29,3 +27,5 @@ case-search:
   physical-index: "${TRANSACTIQ_FRAUD_CASE_INDEX:transactiq-fraud-cases-v1}"
   read-alias: "${TRANSACTIQ_FRAUD_CASE_READ_ALIAS:transactiq-fraud-cases}"
   write-alias: "${TRANSACTIQ_FRAUD_CASE_WRITE_ALIAS:transactiq-fraud-cases-write}"
+  default-page-size: 20
+  maximum-page-size: 100

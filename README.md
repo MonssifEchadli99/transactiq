@@ -25,7 +25,8 @@ Current modules:
 - `case-management-service`: idempotent Kafka consumer, immutable PostgreSQL fraud-case snapshots,
   bounded failure recovery, analyst APIs, and a transactional Fraud Case projection outbox.
 - `case-projection-contract`: versioned full-snapshot Fraud Case projection Protobuf contract.
-- `case-search-service`: internal Kotlin Kafka-to-OpenSearch indexer; it exposes no search API.
+- `case-search-service`: Kotlin Kafka-to-OpenSearch indexer and eventually consistent Fraud Case
+  search API.
 - `fraud-contract`: versioned fraud-assessment gRPC contract.
 - `fraud-engine`: deterministic synthetic stateless and velocity fraud rules backed by Redis.
 - `event-contract`: versioned authorization-completed Protobuf contract.
@@ -59,6 +60,10 @@ Its development-only analyst API is under `/api/v1/fraud-cases`. Claim, resoluti
 `assignment=MINE` use caller-supplied `X-Analyst-Id`; this is deliberately not authentication or
 authorization. Resolution requires `CONFIRMED_FRAUD` or `FALSE_POSITIVE` plus a normalized,
 synthetic rationale. Lifecycle-history reads do not require a fake identity header.
+
+Start `case-search-service` with Kafka and OpenSearch available to use
+`GET /api/v1/fraud-cases/search`. It queries only the OpenSearch read alias and may lag PostgreSQL.
+Cycle 5 is complete with no authentication, UI, or AI behavior.
 
 Then run the deterministic simulator catalog in another window:
 

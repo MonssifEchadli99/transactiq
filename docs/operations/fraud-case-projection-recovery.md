@@ -50,11 +50,13 @@ projection DLT before source progress continues.
 
 Increasing the projection topic beyond one partition requires an explicit ownership/data-migration
 decision. OpenSearch availability cannot block Case Management creation, claim, or resolution.
-Increment 5A still provides no public search endpoint; that remains deferred to Increment 5B.
+The Cycle 5 search endpoint depends directly on the read alias. During an OpenSearch outage it
+returns HTTP 503; it never falls back to PostgreSQL and cannot block authoritative case commands.
 
 For a manual rebuild, create another versioned index with the approved mapping, replay the compacted
 topic from the earliest retained offsets, compare sampled versions with PostgreSQL, then manually
 switch aliases. Automated replay, alias migration, deletion, and retention are deferred.
 
 Only synthetic data may be indexed. Raw tokens, token fingerprints, source-event hashes, Kafka
-payloads/headers, credentials, and secrets are excluded. Increment 5A has no search endpoint.
+payloads/headers, credentials, and secrets are excluded. The search response additionally omits
+projection hashes/versions, request IDs, rule evidence, resolution rationale, and resolution actor.

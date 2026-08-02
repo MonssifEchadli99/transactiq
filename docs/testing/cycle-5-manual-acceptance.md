@@ -1,4 +1,4 @@
-# Cycle 5 Fraud-Case Creation Acceptance
+# Cycle 5 Fraud-Case Management Acceptance
 
 Automated tests are the authoritative acceptance mechanism. They use PostgreSQL and
 Kafka Testcontainers where infrastructure is required; the complete local stack does not need to
@@ -49,8 +49,13 @@ Inspect DLT headers and confirm the original bytes are unchanged; exception mess
 stack traces must not be present. A successful DLT send unblocks the next record. An unavailable or
 mispartitioned DLT must leave the source offset uncommitted and retry recovery with a positive delay.
 
-## Increment 5A projection observation
+## Completed projection and search observation
 
 PostgreSQL, Kafka, and OpenSearch Testcontainers tests are authoritative. The compacted main topic
 is `transactiq.fraud-case.projection.v1`; its ordinary-retention DLT appends `.dlt`. PostgreSQL
-details remain authoritative while OpenSearch catches up. No search endpoint exists in 5A.
+details remain authoritative while OpenSearch catches up. The completed Cycle 5 endpoint is
+`GET /api/v1/fraud-cases/search`; it reads only the OpenSearch alias and is eventually consistent.
+Exercise free text, filters, deterministic sorting, and the opaque cursor. Empty results are HTTP
+200, invalid parameters are HTTP 400, and unavailable OpenSearch is HTTP 503. Summaries omit
+request IDs, projection hashes/versions, rule evidence, resolution rationale, and resolution actor.
+Cycle 5 intentionally includes no authentication, UI, or AI.

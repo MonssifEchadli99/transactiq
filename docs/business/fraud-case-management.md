@@ -79,10 +79,25 @@ a full `CREATED`, `CLAIMED`, or `RESOLVED` snapshot to a dedicated transactional
 is an eventually consistent read projection and is never called by case business operations.
 
 The projection excludes raw card tokens, card-token fingerprints, source-event hashes, Kafka
-bytes/headers, credentials, and infrastructure secrets. Increment 5A exposes no search endpoint.
+bytes/headers, credentials, and infrastructure secrets.
+
+`GET /api/v1/fraud-cases/search` queries only the OpenSearch read alias. Optional `q` searches
+resolution rationale and matched-rule evidence, with exact case-ID and merchant-ID matching.
+Optional filters are `status`, `fraudAssessment`, `assigneeId`, `authorizationDecision`,
+`resolutionOutcome`, `currency`, `country`, and `channel`. Sort values are `CREATED_AT_ASC`,
+`CREATED_AT_DESC` (default), `UPDATED_AT_ASC`, and `UPDATED_AT_DESC`; case ID is always the stable
+ascending tie-breaker. `pageSize` defaults to 20 and is capped at 100. `nextCursor` is an opaque,
+validated `search_after` cursor bound to the selected sort.
+
+The compact response contains case and assignment status, merchant context, amount/currency,
+country/channel, authorization and fraud outcomes, risk score, case timestamps, and optional
+resolution outcome. It excludes request IDs, projection versions and hashes, rule evidence,
+resolution rationale, resolution actor, raw tokens, and all other prohibited projection data.
+No result is HTTP 200 with an empty `items` array. Invalid input is HTTP 400 and OpenSearch
+unavailability is HTTP 503.
 
 ## Explicit exclusions
 
-This increment has no reopen, release, reassignment, general notes, real identity/security, gateway
+Cycle 5 is complete. It has no reopen, release, reassignment, general notes, real identity/security, gateway
 route, lifecycle Kafka event, transaction action, refund, case grouping, priority, resolution
-outcome filter, DLT replay tooling, or AI/RAG behavior.
+DLT replay tooling, UI, authentication/authorization, or AI/RAG behavior.

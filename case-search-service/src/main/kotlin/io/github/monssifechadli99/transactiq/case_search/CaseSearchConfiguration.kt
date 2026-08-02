@@ -31,6 +31,9 @@ class CaseSearchConfiguration {
     @Bean fun openSearchIndexInitializer(client:RestClient,p:CaseSearchProperties,mapper:ObjectMapper)=OpenSearchIndexInitializer(client,p,mapper)
     @Bean fun projectionConsumer(v:ProjectionValidator,m:ProjectionDocumentMapper,s:OpenSearchProjectionStore)=
         ProjectionConsumer(v,m,s)
+    @Bean fun fraudCaseSearchStore(client:RestClient,mapper:ObjectMapper,p:CaseSearchProperties)=
+        FraudCaseSearchStore(client,mapper,p)
+    @Bean fun searchCursorCodec(mapper:ObjectMapper)=SearchCursorCodec(mapper)
     @Bean fun projectionTopics(p:CaseSearchProperties)=KafkaAdmin.NewTopics(
         TopicBuilder.name(p.topic).partitions(p.topicPartitions).replicas(1)
             .config(TopicConfig.CLEANUP_POLICY_CONFIG,TopicConfig.CLEANUP_POLICY_COMPACT).build(),
