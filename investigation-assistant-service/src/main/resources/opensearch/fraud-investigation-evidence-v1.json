@@ -1,0 +1,32 @@
+{
+  "settings": {
+    "index.number_of_shards": 1,
+    "index.number_of_replicas": 0,
+    "index.knn": true
+  },
+  "mappings": {
+    "dynamic": "strict",
+    "properties": {
+      "sourceId": { "type": "keyword" },
+      "sourceType": { "type": "keyword" },
+      "caseId": { "type": "keyword" },
+      "text": { "type": "text" },
+      "embedding": {
+        "type": "knn_vector",
+        "dimension": 1536,
+        "space_type": "cosinesimil",
+        "method": {
+          "name": "hnsw",
+          "engine": "lucene",
+          "space_type": "cosinesimil",
+          "parameters": { "ef_construction": 128, "m": 24 }
+        }
+      },
+      "projectionVersion": { "type": "long" },
+      "projectionIntegrity": { "type": "keyword", "index": false, "doc_values": false },
+      "chunkState": { "type": "keyword", "index": false, "doc_values": false },
+      "publicationComplete": { "type": "boolean", "index": false, "doc_values": false },
+      "resolutionExpected": { "type": "boolean", "index": false, "doc_values": false }
+    }
+  }
+}

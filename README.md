@@ -27,6 +27,9 @@ Current modules:
 - `case-projection-contract`: versioned full-snapshot Fraud Case projection Protobuf contract.
 - `case-search-service`: Kotlin Kafka-to-OpenSearch indexer and eventually consistent Fraud Case
   search API.
+- `investigation-assistant-service`: Kafka-to-OpenSearch safe evidence indexer, OpenAI embeddings
+  through Spring AI, and a read-only hybrid (BM25 + k-NN + RRF) retrieval API for a future,
+  advisory-only AI fraud-investigation assistant. Generates no AI answers yet.
 - `fraud-contract`: versioned fraud-assessment gRPC contract.
 - `fraud-engine`: deterministic synthetic stateless and velocity fraud rules backed by Redis.
 - `event-contract`: versioned authorization-completed Protobuf contract.
@@ -37,7 +40,7 @@ Current modules:
 Java 21 and Docker Desktop are required. From PowerShell at the repository root:
 
 ```powershell
-docker compose up -d postgres case-postgres redis kafka
+docker compose up -d postgres case-postgres redis kafka opensearch
 ```
 
 Start the two services in separate PowerShell windows:
@@ -64,6 +67,25 @@ synthetic rationale. Lifecycle-history reads do not require a fake identity head
 Start `case-search-service` with Kafka and OpenSearch available to use
 `GET /api/v1/fraud-cases/search`. It queries only the OpenSearch read alias and may lag PostgreSQL.
 Cycle 5 is complete with no authentication, UI, or AI behavior.
+
+Start `investigation-assistant-service` with Kafka, OpenSearch, and a nonblank effective OpenAI
+embedding key to use `POST /api/v1/fraud-cases/{caseId}/investigation/retrieval`. The default path
+uses `OPENAI_API_KEY`; an explicitly configured `spring.ai.openai.embedding.api-key` takes
+precedence and must itself be nonblank. `OPENAI_LOG` must be absent or set to `off` so SDK
+diagnostics cannot bypass the service's logging controls:
+
+```powershell
+$env:OPENAI_API_KEY = "<your-key>"
+.\gradlew.bat :investigation-assistant-service:bootRun
+```
+
+It consumes the same Fraud Case projection topic as `case-search-service` under its own
+consumer group, indexes safe synthetic evidence chunks into a dedicated OpenSearch vector
+index, and performs genuine hybrid (BM25 + k-NN + RRF) retrieval. It generates no AI answers
+in Cycle 6 Increment 6A; see
+[the AI investigation assistant guide](docs/business/ai-investigation-assistant.md) for the
+safe-field allowlist, complete configuration table, focused test commands, manual index cutover,
+and current replay limitations.
 
 Then run the deterministic simulator catalog in another window:
 

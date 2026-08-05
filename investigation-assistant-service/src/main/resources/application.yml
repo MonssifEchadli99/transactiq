@@ -1,0 +1,61 @@
+spring:
+  application:
+    name: investigation-assistant-service
+  kafka:
+    bootstrap-servers: "${TRANSACTIQ_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}"
+    consumer:
+      enable-auto-commit: false
+      auto-offset-reset: earliest
+      isolation-level: read_committed
+      key-deserializer: org.apache.kafka.common.serialization.ByteArrayDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.ByteArrayDeserializer
+    listener:
+      ack-mode: record
+    producer:
+      acks: all
+      key-serializer: org.apache.kafka.common.serialization.ByteArraySerializer
+      value-serializer: org.apache.kafka.common.serialization.ByteArraySerializer
+  ai:
+    model:
+      chat: none
+    openai:
+      api-key: "${OPENAI_API_KEY:}"
+      embedding:
+        options:
+          model: "${TRANSACTIQ_EMBEDDING_MODEL:text-embedding-3-small}"
+          dimensions: 1536
+
+logging:
+  level:
+    org.springframework.ai: INFO
+    org.springframework.web.client.DefaultRestClient: INFO
+    org.springframework.web.servlet.mvc.method.annotation: INFO
+    org.springframework.http.converter: INFO
+    org.apache.hc.client5.http.headers: "OFF"
+    org.apache.hc.client5.http.wire: "OFF"
+    org.apache.http.headers: "OFF"
+    org.apache.http.wire: "OFF"
+    reactor.netty.http.client: INFO
+    org.apache.coyote: INFO
+
+investigation-assistant:
+  consumer:
+    topic: "transactiq.fraud-case.projection.v1"
+    group-id: "transactiq-investigation-assistant-v1"
+    dlt-topic: "transactiq.investigation-assistant.projection.v1.dlt"
+    topic-partitions: 1
+    retry-interval: 1s
+    retry-attempts: 5
+  opensearch:
+    url: "${TRANSACTIQ_OPENSEARCH_URL:http://localhost:9200}"
+    request-timeout: 2s
+    physical-index: "${TRANSACTIQ_INVESTIGATION_EVIDENCE_INDEX:transactiq-fraud-investigation-evidence-v1}"
+    read-alias: "${TRANSACTIQ_INVESTIGATION_EVIDENCE_READ_ALIAS:transactiq-fraud-investigation-evidence}"
+    write-alias: "${TRANSACTIQ_INVESTIGATION_EVIDENCE_WRITE_ALIAS:transactiq-fraud-investigation-evidence-write}"
+    hybrid-pipeline: "transactiq-fraud-investigation-evidence-hybrid-v1"
+  embedding:
+    expected-dimensions: 1536
+  retrieval:
+    candidate-pool-size: 50
+    focal-text-max-length: 2000
+    excerpt-max-length: 500
