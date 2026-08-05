@@ -17,9 +17,17 @@ spring:
       value-serializer: org.apache.kafka.common.serialization.ByteArraySerializer
   ai:
     model:
-      chat: none
+      chat: openai
+      embedding: openai
+      image: none
+      moderation: none
+      audio:
+        speech: none
+        transcription: none
     openai:
       api-key: "${OPENAI_API_KEY:}"
+      chat:
+        timeout: "${TRANSACTIQ_CHAT_TIMEOUT:10s}"
       embedding:
         options:
           model: "${TRANSACTIQ_EMBEDDING_MODEL:text-embedding-3-small}"
@@ -28,6 +36,7 @@ spring:
 logging:
   level:
     org.springframework.ai: INFO
+    org.springframework.ai.openai.OpenAiChatModel: "OFF"
     org.springframework.web.client.DefaultRestClient: INFO
     org.springframework.web.servlet.mvc.method.annotation: INFO
     org.springframework.http.converter: INFO
@@ -55,6 +64,9 @@ investigation-assistant:
     hybrid-pipeline: "transactiq-fraud-investigation-evidence-hybrid-v1"
   embedding:
     expected-dimensions: 1536
+  chat:
+    model: "${TRANSACTIQ_CHAT_MODEL:gpt-4.1-mini}"
+    timeout: "${TRANSACTIQ_CHAT_TIMEOUT:10s}"
   retrieval:
     candidate-pool-size: 50
     focal-text-max-length: 2000

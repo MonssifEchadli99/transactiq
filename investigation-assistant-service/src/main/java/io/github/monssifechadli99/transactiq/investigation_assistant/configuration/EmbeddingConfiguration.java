@@ -21,11 +21,16 @@ public class EmbeddingConfiguration {
             "OPENAI_LOG must be absent or set to off";
     static final String OPENAI_API_KEY_CONFIGURATION_ERROR =
             "Effective OpenAI embedding API key must be configured with a nonblank value";
+    static final String OPENAI_CHAT_API_KEY_CONFIGURATION_ERROR =
+            "Effective OpenAI chat API key must be configured with a nonblank value";
 
     private static final String OPENAI_SDK_LOG_ENVIRONMENT_VARIABLE = "OPENAI_LOG";
     private static final String OPENAI_SDK_LOG_DISABLED_VALUE = "off";
     private static final String COMMON_API_KEY_PROPERTY = "spring.ai.openai.api-key";
     private static final String EMBEDDING_API_KEY_PROPERTY = "spring.ai.openai.embedding.api-key";
+    private static final String CHAT_API_KEY_PROPERTY = "spring.ai.openai.chat.api-key";
+    private static final String CHAT_MODEL_PROPERTY = "spring.ai.model.chat";
+    private static final String DISABLED_MODEL_VALUE = "none";
 
     @Bean
     static BeanFactoryPostProcessor requireSafeOpenAiConfiguration(Environment environment) {
@@ -42,6 +47,16 @@ public class EmbeddingConfiguration {
                     : environment.getProperty(COMMON_API_KEY_PROPERTY);
             if (!StringUtils.hasText(effectiveApiKey)) {
                 throw new IllegalStateException(OPENAI_API_KEY_CONFIGURATION_ERROR);
+            }
+
+            String configuredChatModel = environment.getProperty(CHAT_MODEL_PROPERTY);
+            if (!DISABLED_MODEL_VALUE.equalsIgnoreCase(configuredChatModel)) {
+                String effectiveChatApiKey = environment.containsProperty(CHAT_API_KEY_PROPERTY)
+                        ? environment.getProperty(CHAT_API_KEY_PROPERTY)
+                        : environment.getProperty(COMMON_API_KEY_PROPERTY);
+                if (!StringUtils.hasText(effectiveChatApiKey)) {
+                    throw new IllegalStateException(OPENAI_CHAT_API_KEY_CONFIGURATION_ERROR);
+                }
             }
         };
     }

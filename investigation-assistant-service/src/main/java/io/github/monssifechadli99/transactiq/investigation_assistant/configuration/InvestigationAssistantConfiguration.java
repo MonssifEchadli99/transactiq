@@ -2,13 +2,16 @@ package io.github.monssifechadli99.transactiq.investigation_assistant.configurat
 
 import io.github.monssifechadli99.transactiq.investigation_assistant.adapter.in.kafka.InvestigationProjectionConsumer;
 import io.github.monssifechadli99.transactiq.investigation_assistant.adapter.in.web.InvestigationApiMapper;
+import io.github.monssifechadli99.transactiq.investigation_assistant.adapter.in.web.InvestigationAnswerApiMapper;
 import io.github.monssifechadli99.transactiq.investigation_assistant.adapter.out.opensearch.OpenSearchEvidenceIndexInitializer;
 import io.github.monssifechadli99.transactiq.investigation_assistant.adapter.out.opensearch.OpenSearchEvidenceIndexStore;
 import io.github.monssifechadli99.transactiq.investigation_assistant.adapter.out.opensearch.OpenSearchEvidenceRetrievalStore;
+import io.github.monssifechadli99.transactiq.investigation_assistant.application.InvestigationAnswerService;
 import io.github.monssifechadli99.transactiq.investigation_assistant.application.InvestigationRetrievalService;
 import io.github.monssifechadli99.transactiq.investigation_assistant.application.ProjectionIngestionService;
 import io.github.monssifechadli99.transactiq.investigation_assistant.application.ProjectionValidator;
 import io.github.monssifechadli99.transactiq.investigation_assistant.application.SafeEvidenceMapper;
+import io.github.monssifechadli99.transactiq.investigation_assistant.application.port.out.ChatGenerationPort;
 import io.github.monssifechadli99.transactiq.investigation_assistant.application.port.out.EmbeddingPort;
 import io.github.monssifechadli99.transactiq.investigation_assistant.application.port.out.EvidenceIndexPort;
 import io.github.monssifechadli99.transactiq.investigation_assistant.application.port.out.EvidenceRetrievalPort;
@@ -55,6 +58,11 @@ public class InvestigationAssistantConfiguration {
     @Bean
     InvestigationApiMapper investigationApiMapper() {
         return new InvestigationApiMapper();
+    }
+
+    @Bean
+    InvestigationAnswerApiMapper investigationAnswerApiMapper() {
+        return new InvestigationAnswerApiMapper();
     }
 
     @Bean
@@ -110,6 +118,13 @@ public class InvestigationAssistantConfiguration {
                 retrievalProperties.candidatePoolSize(),
                 retrievalProperties.focalTextMaxLength(),
                 retrievalProperties.excerptMaxLength());
+    }
+
+    @Bean
+    InvestigationAnswerService investigationAnswerService(
+            InvestigationRetrievalService investigationRetrievalService,
+            ChatGenerationPort chatGenerationPort) {
+        return new InvestigationAnswerService(investigationRetrievalService, chatGenerationPort);
     }
 
     @Bean

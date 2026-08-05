@@ -1,21 +1,22 @@
-# AI Fraud-Investigation Assistant — Retrieval Foundation (Cycle 6, Increment 6A)
+# AI Fraud-Investigation Assistant — Grounded Answers (Cycle 6, Increments 6A–6B)
 
 ## Purpose and scope
 
-Increment 6A builds the safe retrieval foundation for a future AI fraud-investigation
-assistant. It consumes the existing Fraud Case projection, produces safe synthetic evidence
-chunks, embeds them with OpenAI through Spring AI, indexes them in a dedicated OpenSearch
-vector index, and exposes a read-only hybrid-retrieval REST endpoint.
+Increment 6A provides the safe retrieval foundation: it consumes the existing Fraud Case
+projection, produces safe synthetic evidence chunks, embeds them with OpenAI through Spring AI,
+indexes them in a dedicated OpenSearch vector index, and exposes read-only hybrid retrieval.
+Increment 6B adds one structured, grounded answer endpoint over exactly that retrieved context.
 
-**6A generates no AI answers.** There is no chat, no prompt orchestration, no Structured
-Outputs, and no conversation history. It returns retrieved evidence excerpts only.
-
-The future assistant is strictly advisory. It cannot and never will:
+The assistant is strictly advisory and read-only. It cannot:
 
 - approve or decline an authorization;
 - change a fraud score or assessment;
 - claim or resolve a fraud case;
 - perform any other business mutation.
+
+It has no persistence, conversation history, streaming, tool access, or autonomous decision
+authority. Evidence text is untrusted data inside a delimited prompt section; text that resembles
+an instruction never changes the system rules or grants an action capability.
 
 PostgreSQL remains the sole business source of truth. This module's OpenSearch index is an
 eventually consistent read/retrieval projection, exactly like `case-search-service`'s index. It
@@ -31,16 +32,18 @@ read/replay position never interferes with `case-search-service`.
 
 ### Hexagonal boundary
 
-Application logic is separated from adapters. In particular, an application-owned
-`EmbeddingPort` (Strategy pattern) abstracts embedding generation:
+Application logic is separated from adapters. An application-owned `EmbeddingPort` (Strategy
+pattern) abstracts embedding generation:
 
 - production strategy — `OpenAiEmbeddingAdapter`, backed by Spring AI's OpenAI embedding
   client;
 - test strategy — a deterministic, offline `DeterministicEmbeddingAdapter` used only in
   tests.
 
-There is exactly one production AI provider. There is intentionally no provider enum,
-factory, runtime provider selection, or fallback — 6A does not anticipate a second provider.
+An equally small `ChatGenerationPort` separates answer orchestration and validation from the
+Spring AI/OpenAI production adapter. Tests replace both ports with deterministic local fakes.
+There is exactly one production AI provider. There is intentionally no provider enum, factory,
+runtime provider selection, or fallback.
 
 ## Safe evidence model
 
@@ -153,7 +156,7 @@ document set and publication marker, the partial case is retrieval-ineligible. I
 end in DLT recovery, that barrier remains closed, so DLT exhaustion cannot expose split evidence;
 a later successful replay safely repairs and publishes the snapshot.
 
-## OpenAI embeddings
+## OpenAI embeddings and chat generation
 
 - Default model: `text-embedding-3-small` (environment-configurable via
   `TRANSACTIQ_EMBEDDING_MODEL`).
@@ -174,21 +177,42 @@ Evidence texts, vectors, API keys, and raw OpenAI request/response bodies are ne
 The OpenAI Java SDK's independent diagnostics are also disabled operationally: `OPENAI_LOG` must
 be absent or equal `off` case-insensitively, otherwise startup fails before any provider request.
 
+Increment 6B uses `gpt-4.1-mini` by default for one non-streaming chat request. The model is
+environment-configurable, the request has an application timeout, temperature is `0.0`, and the
+adapter requests a strict JSON-schema response. An optional nonblank
+`spring.ai.openai.chat.api-key` (for example `SPRING_AI_OPENAI_CHAT_API_KEY`) takes precedence for
+chat; otherwise chat uses the common `OPENAI_API_KEY`. The same startup validation and
+`OPENAI_LOG` guard apply to the effective chat key. There is no live provider call in automated
+tests.
+
+Analyst questions, retrieved evidence, prompts, generated summaries/findings/checks, provider
+request or response bodies, credentials, and raw exceptions are never logged. Application and
+HTTP DTO `toString()` implementations redact content so accidental structured logging cannot
+render those values. The Spring AI `OpenAiChatModel` logger is forced to `OFF` because its
+zero-choice warning path can render the prompt; the independent OpenAI SDK diagnostic guard
+remains `OPENAI_LOG=off` or absent.
+
 ## Configuration
 
 The table below covers every module-owned setting plus the connection and model settings that
-6A explicitly overrides. Spring Boot relaxed binding also permits the uppercase underscore form
+6A/6B explicitly override. Spring Boot relaxed binding also permits the uppercase underscore form
 of each property (for example, `INVESTIGATION_ASSISTANT_CONSUMER_GROUP_ID`).
 
 | Property or explicit environment variable | Default | Purpose |
 |---|---|---|
 | `spring.application.name` | `investigation-assistant-service` | Stable Spring application identity. |
-| `spring.ai.model.chat` | `none` | Keeps answer/chat generation disabled in 6A. |
-| `OPENAI_API_KEY` | Empty | Common OpenAI-key fallback. It is required unless a nonblank `spring.ai.openai.embedding.api-key` is configured; a blank effective key fails startup before Kafka or REST becomes ready. |
+| `spring.ai.model.chat` | `openai` | Enables the sole production chat adapter. |
+| `spring.ai.model.embedding` | `openai` | Enables the existing 6A OpenAI embedding adapter. |
+| `spring.ai.model.image`, `spring.ai.model.moderation`, `spring.ai.model.audio.speech`, `spring.ai.model.audio.transcription` | `none` | Explicitly disables unused OpenAI capabilities so the service exposes only chat and embedding model surfaces. |
+| `OPENAI_API_KEY` | Empty | Common OpenAI-key fallback. Every provider operation must have a nonblank effective key before Kafka or REST becomes ready. |
 | `spring.ai.openai.embedding.api-key` | Not configured | Optional Spring AI embedding-specific override. When present it takes precedence over the common key and must be nonblank after trimming. |
+| `spring.ai.openai.chat.api-key` / `SPRING_AI_OPENAI_CHAT_API_KEY` | Not configured | Optional chat-specific override. When present it takes precedence over the common key and must be nonblank after trimming. |
 | `OPENAI_LOG` | Absent or `off` | OpenAI Java SDK diagnostic logging guard. Any other value fails startup so SDK request/response bodies cannot bypass application logging controls. |
 | `TRANSACTIQ_EMBEDDING_MODEL` | `text-embedding-3-small` | The sole production embedding model. A model change requires compatibility review and a new index version. |
 | `spring.ai.openai.embedding.options.dimensions` | `1536` | Requested OpenAI vector dimensions; must stay aligned with the mapping and expected-dimension guard. |
+| `TRANSACTIQ_CHAT_MODEL` | `gpt-4.1-mini` | The sole production chat model used for structured answer generation. |
+| `TRANSACTIQ_CHAT_TIMEOUT` / `spring.ai.openai.chat.timeout` | `10s` | Maximum time allowed by the OpenAI chat HTTP client for one generation request; the same environment value also binds the module validation property. |
+| `logging.level.org.springframework.ai.openai.OpenAiChatModel` | `OFF` | Prevents Spring AI warning paths from rendering analyst questions, evidence, or prompts. |
 | `TRANSACTIQ_KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | Kafka bootstrap servers. |
 | `spring.kafka.consumer.enable-auto-commit` | `false` | Prevents offsets from advancing independently of record processing. |
 | `spring.kafka.consumer.auto-offset-reset` | `earliest` | A brand-new group starts at the earliest retained projection. |
@@ -265,7 +289,31 @@ generic `VectorStore`/RAG advisors are intentionally not used.
 8. Where OpenSearch scores/ranks tie, an explicit deterministic tie-breaker (source ID
    ascending) keeps ordering stable.
 
-## REST contract
+### Grounded answer flow
+
+`POST /api/v1/fraud-cases/{caseId}/investigation/answer` adds generation without opening a
+second evidence path:
+
+1. Run the 6A retrieval service for the focal case and at most five related cases. Only complete,
+   publication-gated sources can proceed.
+2. Flatten those bounded public excerpts into model context with their stable source identifiers.
+   The prompt marks that block as untrusted reference data, prohibits following instructions found
+   inside it, and restates the advisory/read-only boundary.
+3. Request one deterministic structured answer from the configured OpenAI chat model.
+4. Reject null or malformed output. `GROUNDED` requires at least one factual finding, and every
+   finding requires at least one citation ID. `INSUFFICIENT_EVIDENCE` requires no factual findings.
+5. Reject every citation ID that is absent from the exact retrieved-source allowlist. Resolve valid
+   IDs server-side to public source ID, source type, case ID, and excerpt metadata.
+6. Return only the validated summary, findings, recommended checks, grounding status, and resolved
+   citations. No provider response object, prompt, vector, integrity field, private publication
+   marker, credential, or assignee/resolver identity reaches the API.
+
+The model may recommend checks an analyst could perform, but the service has no write-side case
+port and cannot claim, resolve, block, approve, or otherwise mutate a case.
+
+## REST contracts
+
+### Retrieval contract
 
 ```
 POST /api/v1/fraud-cases/{caseId}/investigation/retrieval
@@ -314,21 +362,90 @@ Example response:
 No vector, provider detail, projection version, raw OpenSearch score, or Kafka metadata is
 ever present in the response.
 
+### Grounded answer contract
+
+```http
+POST /api/v1/fraud-cases/11111111-1111-4111-8111-111111111111/investigation/answer
+Content-Type: application/json
+
+{
+  "question": "Which evidence should I review first?"
+}
+```
+
+`question` is required, trimmed server-side, and must contain 1–1,000 characters. The case ID is
+the UUID path variable; clients cannot provide evidence, citations, model settings, or case actions.
+
+Example grounded response:
+
+```json
+{
+  "caseId": "11111111-1111-4111-8111-111111111111",
+  "summary": "The available evidence highlights a high-severity velocity signal.",
+  "findings": [
+    {
+      "text": "The authorization matched the VELOCITY_SPIKE rule with HIGH severity.",
+      "citations": [
+        {
+          "sourceId": "case:11111111-1111-4111-8111-111111111111:evidence",
+          "sourceType": "CASE_EVIDENCE",
+          "caseId": "11111111-1111-4111-8111-111111111111",
+          "excerpt": "Fraud case 11111111-1111-4111-8111-111111111111 status IN_REVIEW. ..."
+        }
+      ]
+    }
+  ],
+  "recommendedChecks": [
+    "Compare the recent synthetic authorization sequence with the velocity rule evidence."
+  ],
+  "groundingStatus": "GROUNDED"
+}
+```
+
+When retrieval does not support a factual finding, the service instead returns a concise summary,
+an empty `findings` list, safe recommended checks, and
+`"groundingStatus": "INSUFFICIENT_EVIDENCE"`. It does not guess a fact or manufacture a source
+identifier.
+
 ### Status codes
 
 - `400` — invalid case ID, question, or `maxRelatedCases`.
 - `404` — the focal case has no evidence indexed yet (the index is eventually consistent; a
   very recently created case may not have caught up).
-- `503` — the embedding provider or OpenSearch is unavailable, or focal evidence is present but
-  its private publication generation is incomplete/inconsistent.
+- `503` — the embedding/chat provider or OpenSearch is unavailable, focal evidence is present but
+  its private publication generation is incomplete/inconsistent, or chat output is malformed or
+  fails grounding/citation validation. Retrieval failures use `INVESTIGATION_RETRIEVAL_UNAVAILABLE`;
+  provider/answer-validation failures use `INVESTIGATION_ANSWER_UNAVAILABLE`.
 
 Error bodies follow `case-management-service`'s existing sealed `{code}` /
 `{code, fieldErrors}` shape. Raw internal or provider exceptions are never exposed.
 
+## Compact offline evaluation
+
+`src/test/resources/evaluation/grounded-answer-evaluation.json` is a deliberately small synthetic
+catalog, exercised by `GroundedAnswerEvaluationTest` through the real 6A retrieval orchestration
+and 6B answer validator. Its deterministic fake chat adapter returns only the catalogued draft or a
+safe simulated provider failure; it cannot instantiate Spring AI or contact OpenAI.
+
+The nine scenarios cover:
+
+- one clearly supported finding and multiple independently cited findings;
+- an explicit `INSUFFICIENT_EVIDENCE` answer;
+- rejection of an unknown citation and of an uncited factual finding;
+- imperative prompt-injection text retained only as untrusted evidence data;
+- a valid finding grounded in related-case evidence;
+- a sanitized provider failure; and
+- rejection of malformed structured output.
+
+This is a compact regression/evaluation asset for a portfolio increment, not a statistical model
+quality benchmark. It proves orchestration and deterministic policy enforcement; it does not score
+provider accuracy or compare models.
+
 ## Focused verification
 
-Java 21 and a running Docker engine are prerequisites. All automated embeddings are deterministic
-test doubles; these commands do not need an OpenAI key and must not make a live provider request.
+Java 21 and a running Docker engine are prerequisites. All automated embeddings and chat
+generations are deterministic test doubles; these commands do not need an OpenAI key and must not
+make a live provider request.
 
 ```powershell
 # Safe mapping, lifecycle, integrity, and pre-embedding behavior
@@ -342,6 +459,9 @@ test doubles; these commands do not need an OpenAI key and must not make a live 
 
 # Kafka retry, genuine DLT-send failure, split-snapshot gating/repair, and the production REST path
 .\gradlew.bat :investigation-assistant-service:test --tests "*InvestigationProjectionKafkaIntegrationTest" --tests "*InvestigationRetrievalApiIntegrationTest"
+
+# Grounded-answer orchestration, citation enforcement, REST safety, and the nine-scenario offline evaluation
+.\gradlew.bat :investigation-assistant-service:test --tests "*InvestigationAnswer*Test" --tests "*GroundedAnswerEvaluationTest"
 
 # Complete module verification
 .\gradlew.bat :investigation-assistant-service:test --rerun-tasks
@@ -428,10 +548,22 @@ For a manual local rebuild and cutover:
 7. Recheck consumer lag, focal retrieval, related-case grouping, and several synthetic cases before
    retaining v1 as the rollback target. Index deletion and retention remain explicit operator work.
 
-## Out of scope for 6A
+## Current limitations and out of scope for 6B
 
-Generated investigation answers, chat/prompt orchestration, Structured Outputs, a RAG
-evaluation dataset, MCP, UI, authentication, a gateway, GCP/Terraform deployment, pgvector or
-any other vector store, multi-provider support, conversation history, and streaming. Cycle 5's
-REST contracts, `case-search-service`, its OpenSearch index, fraud scoring, authorization
-decisions, and fraud-case creation/claiming/resolution are all unchanged.
+- Citation allowlisting proves that a returned source was retrieved and that every factual finding
+  names at least one such source. It does not independently prove semantic entailment between the
+  source excerpt and natural-language finding; that remains model-quality evaluation work.
+- Related context is limited to the five cases selected by the existing 6A hybrid retrieval path.
+  Retrieval is eventually consistent and can omit a newly indexed case until ingestion completes.
+- Generation is one non-streaming, stateless request. There is no conversation persistence,
+  history, cache, UI, authentication/authorization, or multi-provider fallback.
+- Prompt-injection resistance is bounded to treating evidence as delimited untrusted data,
+  restrictive instructions, structured output, citation validation, and the absence of tools or
+  mutation ports. The model has no autonomous case-decision authority.
+- The synthetic offline catalog is intentionally compact; no live-provider quality or latency
+  evaluation runs in CI.
+
+MCP tools are reserved for Cycle 6C. Also out of scope are case mutations, autonomous fraud
+decisions, a gateway, GCP/Terraform deployment, pgvector or another vector store, unrelated Cycle
+5 changes, and modifications to fraud scoring, authorization decisions, or case
+creation/claiming/resolution contracts.

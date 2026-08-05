@@ -25,6 +25,7 @@ import java.util.jar.JarOutputStream;
 import java.util.jar.Manifest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.builder.SpringApplicationBuilder;
@@ -104,6 +105,57 @@ class OpenAiApiKeyStartupTest {
     }
 
     @Test
+    void blankChatSpecificKeyOverridesAValidCommonKeyAndFailsBeforeAnyOpenAiRequest() throws Exception {
+        try (LoopbackTrap trap = LoopbackTrap.start()) {
+            Map<String, Object> properties = startupProperties(trap, Map.of(
+                    "spring.ai.model.chat", "openai",
+                    "spring.ai.openai.api-key", FAKE_COMMON_API_KEY,
+                    "spring.ai.openai.chat.api-key", "   "));
+
+            RuntimeException failure = assertThrows(RuntimeException.class, () -> runApplication(properties));
+
+            assertTrue(hasMessage(failure, EmbeddingConfiguration.OPENAI_CHAT_API_KEY_CONFIGURATION_ERROR),
+                    () -> "unexpected startup failure: " + failure);
+            assertEquals(0, trap.outboundRequests(),
+                    "invalid chat configuration must fail before any provider request");
+        }
+    }
+
+    @Test
+    void enabledChatUsesTheValidCommonKeyFallbackWithoutAStartupRequest() throws Exception {
+        try (LoopbackTrap trap = LoopbackTrap.start()) {
+            Map<String, Object> properties = startupProperties(trap, Map.of(
+                    "spring.ai.model.chat", "openai",
+                    "spring.ai.openai.api-key", FAKE_COMMON_API_KEY));
+
+            try (ConfigurableApplicationContext context = runApplication(properties)) {
+                assertTrue(context.isActive());
+                assertNotNull(context.getBean(ChatModel.class));
+            }
+
+            assertEquals(0, trap.outboundRequests(), "valid startup must not make a provider request");
+        }
+    }
+
+    @Test
+    void enabledChatAndEmbeddingCanUseSeparateSpecificKeysWithoutACommonKey() throws Exception {
+        try (LoopbackTrap trap = LoopbackTrap.start()) {
+            Map<String, Object> properties = startupProperties(trap, Map.of(
+                    "spring.ai.model.chat", "openai",
+                    "spring.ai.openai.embedding.api-key", "cycle6b-fake-embedding-key",
+                    "spring.ai.openai.chat.api-key", "cycle6b-fake-chat-key"));
+
+            try (ConfigurableApplicationContext context = runApplication(properties)) {
+                assertTrue(context.isActive());
+                assertNotNull(context.getBean(EmbeddingPort.class));
+                assertNotNull(context.getBean(ChatModel.class));
+            }
+
+            assertEquals(0, trap.outboundRequests(), "valid startup must not make a provider request");
+        }
+    }
+
+    @Test
     void openAiSdkDebugEnvironmentIsRejectedInIsolatedProcessWithoutLeakingOrCallingProvider() throws Exception {
         try (LoopbackTrap trap = LoopbackTrap.startWithResponse(PROVIDER_RESPONSE_SENTINEL)) {
             ProcessBuilder processBuilder = new ProcessBuilder(
@@ -168,6 +220,10 @@ class OpenAiApiKeyStartupTest {
         properties.put("logging.level.root", "OFF");
         properties.put("spring.ai.model.chat", "none");
         properties.put("spring.ai.model.embedding", "openai");
+        properties.put("spring.ai.model.image", "none");
+        properties.put("spring.ai.model.moderation", "none");
+        properties.put("spring.ai.model.audio.speech", "none");
+        properties.put("spring.ai.model.audio.transcription", "none");
         properties.put("spring.ai.openai.base-url", trap.baseUrl());
         properties.putAll(overrides);
         return properties;
@@ -248,6 +304,10 @@ class OpenAiApiKeyStartupTest {
                     "--logging.level.root=OFF",
                     "--spring.ai.model.chat=none",
                     "--spring.ai.model.embedding=openai",
+                    "--spring.ai.model.image=none",
+                    "--spring.ai.model.moderation=none",
+                    "--spring.ai.model.audio.speech=none",
+                    "--spring.ai.model.audio.transcription=none",
                     "--spring.ai.openai.api-key=" + CREDENTIAL_SENTINEL,
                     "--spring.ai.openai.base-url=" + arguments[0],
                     "--spring.ai.openai.max-retries=0",
