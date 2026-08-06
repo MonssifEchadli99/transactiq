@@ -25,6 +25,7 @@ import io.github.monssifechadli99.transactiq.case_management.projection.FraudCas
 import io.github.monssifechadli99.transactiq.case_management.projection.FraudCaseProjectionBootstrapRunner;
 import io.github.monssifechadli99.transactiq.case_management.projection.KafkaProjectionTransactionalProducerFactory;
 import io.github.monssifechadli99.transactiq.case_management.projection.ProjectionTransactionalProducerFactory;
+import io.github.monssifechadli99.transactiq.observability.PortfolioMetrics;
 import java.time.Clock;
 import java.util.UUID;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -173,8 +174,9 @@ public class FraudCaseConfiguration {
     @Bean
     AuthorizationCompletedEventConsumer authorizationCompletedEventConsumer(
             AuthorizationCompletedEventParser parser,
-            FraudCaseCreationService creationService) {
-        return new AuthorizationCompletedEventConsumer(parser, creationService);
+            FraudCaseCreationService creationService,
+            PortfolioMetrics metrics) {
+        return new AuthorizationCompletedEventConsumer(parser, creationService, metrics);
     }
 
     @Bean

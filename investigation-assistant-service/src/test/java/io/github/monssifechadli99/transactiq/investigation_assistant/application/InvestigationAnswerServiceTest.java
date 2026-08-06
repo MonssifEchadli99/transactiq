@@ -16,6 +16,8 @@ import io.github.monssifechadli99.transactiq.investigation_assistant.domain.Gene
 import io.github.monssifechadli99.transactiq.investigation_assistant.domain.GeneratedFindingDraft;
 import io.github.monssifechadli99.transactiq.investigation_assistant.domain.GroundingStatus;
 import io.github.monssifechadli99.transactiq.investigation_assistant.domain.InvestigationAnswerResult;
+import io.github.monssifechadli99.transactiq.observability.PortfolioMetrics;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -63,6 +65,37 @@ class InvestigationAnswerServiceTest {
         assertEquals(GroundingStatus.INSUFFICIENT_EVIDENCE, result.groundingStatus());
         assertTrue(result.findings().isEmpty());
         assertFalse(result.recommendedChecks().isEmpty());
+    }
+
+    @Test
+    void recordsGroundingAndRetrievalWithoutQuestionOrEvidenceTags() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        PortfolioMetrics metrics = new PortfolioMetrics(registry);
+        InvestigationRetrievalService retrieval = new InvestigationRetrievalService(
+                retrievalPort("private evidence text"),
+                ignored -> new float[] {1.0f},
+                10,
+                2000,
+                500,
+                metrics);
+        InvestigationAnswerService service = new InvestigationAnswerService(
+                retrieval,
+                request -> grounded(new GeneratedFindingDraft(
+                        "Supported synthetic finding.", List.of(FOCAL_SOURCE))),
+                metrics);
+
+        service.answer(FOCAL_CASE, "private analyst question");
+
+        assertEquals(1, registry.get("transactiq.investigation.processed")
+                .tags("operation", "retrieval", "result", "retrieved")
+                .counter().count());
+        assertEquals(1, registry.get("transactiq.investigation.processed")
+                .tags("operation", "answer", "result", "grounded")
+                .counter().count());
+        registry.getMeters().forEach(meter -> {
+            assertFalse(meter.getId().toString().contains("private analyst question"));
+            assertFalse(meter.getId().toString().contains("private evidence text"));
+        });
     }
 
     @Test

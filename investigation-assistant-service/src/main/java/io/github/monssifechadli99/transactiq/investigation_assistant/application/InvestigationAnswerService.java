@@ -5,6 +5,7 @@ import io.github.monssifechadli99.transactiq.investigation_assistant.application
 import io.github.monssifechadli99.transactiq.investigation_assistant.domain.ChatGenerationRequest;
 import io.github.monssifechadli99.transactiq.investigation_assistant.domain.GeneratedAnswerDraft;
 import io.github.monssifechadli99.transactiq.investigation_assistant.domain.GeneratedFindingDraft;
+import io.github.monssifechadli99.transactiq.investigation_assistant.domain.FocalEvidenceNotFoundException;
 import io.github.monssifechadli99.transactiq.investigation_assistant.domain.GroundedFinding;
 import io.github.monssifechadli99.transactiq.investigation_assistant.domain.GroundingCitation;
 import io.github.monssifechadli99.transactiq.investigation_assistant.domain.GroundingSource;
@@ -12,6 +13,8 @@ import io.github.monssifechadli99.transactiq.investigation_assistant.domain.Grou
 import io.github.monssifechadli99.transactiq.investigation_assistant.domain.InvestigationAnswerResult;
 import io.github.monssifechadli99.transactiq.investigation_assistant.domain.InvestigationRetrievalResult;
 import io.github.monssifechadli99.transactiq.investigation_assistant.domain.RetrievedSource;
+import io.github.monssifechadli99.transactiq.observability.PortfolioMetrics;
+import io.github.monssifechadli99.transactiq.observability.PortfolioMetrics.Signal;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -27,15 +30,41 @@ public final class InvestigationAnswerService {
 
     private final InvestigationRetrievalService retrievalService;
     private final ChatGenerationPort generationPort;
+    private final PortfolioMetrics metrics;
 
     public InvestigationAnswerService(
             InvestigationRetrievalService retrievalService,
             ChatGenerationPort generationPort) {
+        this(retrievalService, generationPort, PortfolioMetrics.noop());
+    }
+
+    public InvestigationAnswerService(
+            InvestigationRetrievalService retrievalService,
+            ChatGenerationPort generationPort,
+            PortfolioMetrics metrics) {
         this.retrievalService = retrievalService;
         this.generationPort = generationPort;
+        this.metrics = metrics;
     }
 
     public InvestigationAnswerResult answer(String caseId, String question) {
+        try {
+            InvestigationAnswerResult result = doAnswer(caseId, question);
+            metrics.increment(switch (result.groundingStatus()) {
+                case GROUNDED -> Signal.INVESTIGATION_ANSWER_GROUNDED;
+                case INSUFFICIENT_EVIDENCE -> Signal.INVESTIGATION_ANSWER_INSUFFICIENT;
+            });
+            return result;
+        } catch (FocalEvidenceNotFoundException failure) {
+            metrics.increment(Signal.INVESTIGATION_ANSWER_MISSING);
+            throw failure;
+        } catch (RuntimeException failure) {
+            metrics.increment(Signal.INVESTIGATION_ANSWER_UNAVAILABLE);
+            throw failure;
+        }
+    }
+
+    private InvestigationAnswerResult doAnswer(String caseId, String question) {
         InvestigationRetrievalResult retrieval =
                 retrievalService.retrieve(caseId, question, MAX_RELATED_CASES);
         List<GroundingSource> sources = toGroundingSources(retrieval);

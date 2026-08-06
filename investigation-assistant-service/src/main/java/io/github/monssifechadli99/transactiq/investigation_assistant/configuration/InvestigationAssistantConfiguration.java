@@ -18,6 +18,7 @@ import io.github.monssifechadli99.transactiq.investigation_assistant.application
 import io.github.monssifechadli99.transactiq.investigation_assistant.domain.EmbeddingDimensionMismatchException;
 import io.github.monssifechadli99.transactiq.investigation_assistant.domain.InvalidProjectionException;
 import io.github.monssifechadli99.transactiq.investigation_assistant.domain.ProjectionIntegrityException;
+import io.github.monssifechadli99.transactiq.observability.PortfolioMetrics;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.config.TopicConfig;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -111,20 +112,23 @@ public class InvestigationAssistantConfiguration {
     InvestigationRetrievalService investigationRetrievalService(
             EvidenceRetrievalPort evidenceRetrievalPort,
             EmbeddingPort embeddingPort,
-            InvestigationRetrievalProperties retrievalProperties) {
+            InvestigationRetrievalProperties retrievalProperties,
+            PortfolioMetrics metrics) {
         return new InvestigationRetrievalService(
                 evidenceRetrievalPort,
                 embeddingPort,
                 retrievalProperties.candidatePoolSize(),
                 retrievalProperties.focalTextMaxLength(),
-                retrievalProperties.excerptMaxLength());
+                retrievalProperties.excerptMaxLength(),
+                metrics);
     }
 
     @Bean
     InvestigationAnswerService investigationAnswerService(
             InvestigationRetrievalService investigationRetrievalService,
-            ChatGenerationPort chatGenerationPort) {
-        return new InvestigationAnswerService(investigationRetrievalService, chatGenerationPort);
+            ChatGenerationPort chatGenerationPort,
+            PortfolioMetrics metrics) {
+        return new InvestigationAnswerService(investigationRetrievalService, chatGenerationPort, metrics);
     }
 
     @Bean

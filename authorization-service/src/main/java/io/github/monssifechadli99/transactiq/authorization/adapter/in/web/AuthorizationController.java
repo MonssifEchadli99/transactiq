@@ -6,6 +6,8 @@ import io.github.monssifechadli99.transactiq.authorization.api.AuthorizationRequ
 import io.github.monssifechadli99.transactiq.authorization.application.model.AuthorizationProcessingResult;
 import io.github.monssifechadli99.transactiq.authorization.application.port.in.AuthorizationCommand;
 import io.github.monssifechadli99.transactiq.authorization.application.port.in.AuthorizeTransactionUseCase;
+import io.github.monssifechadli99.transactiq.observability.PortfolioMetrics;
+import io.github.monssifechadli99.transactiq.observability.PortfolioMetrics.Signal;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -21,12 +23,15 @@ public class AuthorizationController {
 
     private final AuthorizeTransactionUseCase authorizeTransactionUseCase;
     private final AuthorizationHttpMapper mapper;
+    private final PortfolioMetrics metrics;
 
     public AuthorizationController(
             AuthorizeTransactionUseCase authorizeTransactionUseCase,
-            AuthorizationHttpMapper mapper) {
+            AuthorizationHttpMapper mapper,
+            PortfolioMetrics metrics) {
         this.authorizeTransactionUseCase = authorizeTransactionUseCase;
         this.mapper = mapper;
+        this.metrics = metrics;
     }
 
     @PostMapping(
@@ -38,14 +43,23 @@ public class AuthorizationController {
         AuthorizationProcessingResult result = authorizeTransactionUseCase.authorize(command);
 
         return switch (result) {
-            case AuthorizationProcessingResult.Completed completed ->
-                    ResponseEntity.ok(mapper.toResponse(command, completed.outcome()));
-            case AuthorizationProcessingResult.Pending pending ->
-                    ResponseEntity.status(HttpStatus.ACCEPTED)
-                            .body(mapper.toPendingResponse(pending.requestId()));
-            case AuthorizationProcessingResult.Conflict conflict ->
-                    ResponseEntity.status(HttpStatus.CONFLICT)
-                            .body(new CodeOnly(ErrorCode.REQUEST_ID_CONFLICT));
+            case AuthorizationProcessingResult.Completed completed -> {
+                metrics.increment(switch (completed.outcome().decision()) {
+                    case APPROVED -> Signal.AUTHORIZATION_APPROVED;
+                    case DECLINED -> Signal.AUTHORIZATION_DECLINED;
+                });
+                yield ResponseEntity.ok(mapper.toResponse(command, completed.outcome()));
+            }
+            case AuthorizationProcessingResult.Pending pending -> {
+                metrics.increment(Signal.AUTHORIZATION_PENDING);
+                yield ResponseEntity.status(HttpStatus.ACCEPTED)
+                        .body(mapper.toPendingResponse(pending.requestId()));
+            }
+            case AuthorizationProcessingResult.Conflict conflict -> {
+                metrics.increment(Signal.AUTHORIZATION_CONFLICT);
+                yield ResponseEntity.status(HttpStatus.CONFLICT)
+                        .body(new CodeOnly(ErrorCode.REQUEST_ID_CONFLICT));
+            }
         };
     }
 }

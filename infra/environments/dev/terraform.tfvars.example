@@ -1,0 +1,16 @@
+# Copy values into an untracked tfvars file or provide TF_VAR_* environment
+# variables. These examples are deliberately non-routable and contain no secret.
+project_id                      = "replace-with-gcp-project-id"
+region                          = "europe-west1"
+artifact_registry_repository_id = "transactiq-services"
+image_tag                       = "0000000000000000000000000000000000000000"
+
+# First apply the foundation with false. Add required secret versions outside
+# Terraform and publish SHA-tagged images before changing this to true.
+deploy_services = false
+
+external_kafka_bootstrap_servers = "broker.example.invalid:9092"
+external_opensearch_url           = "https://search.example.invalid"
+
+# Notification channel resources are deliberately outside this blueprint.
+alert_notification_channel_ids = []

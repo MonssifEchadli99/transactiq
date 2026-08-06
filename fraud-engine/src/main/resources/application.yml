@@ -1,4 +1,9 @@
+server:
+  port: "${FRAUD_ENGINE_MANAGEMENT_PORT:8081}"
+
 spring:
+  application:
+    name: fraud-engine
   data:
     redis:
       host: localhost
@@ -73,3 +78,23 @@ fraud:
           high-risk: "5000.00"
     country-switch:
       window: 10m
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "health,info,prometheus"
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+        add-additional-paths: true
+  metrics:
+    tags:
+      application: "${spring.application.name}"
+
+logging:
+  structured:
+    format:
+      console: "${TRANSACTIQ_LOG_FORMAT:logstash}"

@@ -9,11 +9,14 @@ plugins {
 kotlin { jvmToolchain(21); compilerOptions { jvmTarget = JvmTarget.JVM_21 } }
 dependencies {
     implementation(project(":case-projection-contract"))
+    implementation(project(":observability-support"))
+    implementation("org.springframework.boot:spring-boot-starter-actuator")
     implementation("org.springframework.boot:spring-boot-starter")
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter-kafka")
     implementation("org.jetbrains.kotlin:kotlin-reflect")
     implementation("com.google.protobuf:protobuf-java-util:3.25.8")
+    runtimeOnly("io.micrometer:micrometer-registry-prometheus")
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.springframework.boot:spring-boot-testcontainers")
     testImplementation("org.testcontainers:testcontainers-junit-jupiter")

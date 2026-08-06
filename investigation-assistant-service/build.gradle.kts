@@ -14,12 +14,16 @@ dependencies {
     implementation(platform("org.springframework.ai:spring-ai-bom:2.0.0"))
 
     implementation(project(":case-projection-contract"))
+    implementation(project(":observability-support"))
     implementation("com.google.protobuf:protobuf-java-util:3.25.8")
+    implementation("org.springframework.boot:spring-boot-starter-actuator")
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.springframework.boot:spring-boot-starter-kafka")
     implementation("org.springframework.ai:spring-ai-starter-model-openai")
     implementation("org.springframework.ai:spring-ai-starter-mcp-server-webmvc")
+
+    runtimeOnly("io.micrometer:micrometer-registry-prometheus")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.springframework.boot:spring-boot-testcontainers")

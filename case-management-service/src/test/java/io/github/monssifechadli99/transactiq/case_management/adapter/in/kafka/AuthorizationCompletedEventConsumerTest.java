@@ -10,6 +10,8 @@ import static org.mockito.Mockito.when;
 
 import io.github.monssifechadli99.transactiq.case_management.application.port.out.FraudCaseStore;
 import io.github.monssifechadli99.transactiq.case_management.application.service.FraudCaseCreationService;
+import io.github.monssifechadli99.transactiq.observability.PortfolioMetrics;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.UUID;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.Test;
@@ -18,10 +20,12 @@ import org.springframework.kafka.support.Acknowledgment;
 class AuthorizationCompletedEventConsumerTest {
 
     private final FraudCaseStore store = mock(FraudCaseStore.class);
+    private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     private final AuthorizationCompletedEventConsumer consumer =
             new AuthorizationCompletedEventConsumer(
                     new AuthorizationCompletedEventParser(),
-                    new FraudCaseCreationService(store));
+                    new FraudCaseCreationService(store),
+                    new PortfolioMetrics(meterRegistry));
     private final Acknowledgment acknowledgment = mock(Acknowledgment.class);
 
     @Test
@@ -34,6 +38,11 @@ class AuthorizationCompletedEventConsumerTest {
 
         verify(store, never()).create(org.mockito.ArgumentMatchers.any());
         verify(acknowledgment).acknowledge();
+        org.assertj.core.api.Assertions.assertThat(meterRegistry.get("transactiq.case.event.processed")
+                        .tag("result", "not_required")
+                        .counter()
+                        .count())
+                .isEqualTo(1);
     }
 
     @Test
@@ -49,6 +58,11 @@ class AuthorizationCompletedEventConsumerTest {
                 () -> consumer.consume(record(value), acknowledgment));
 
         verify(acknowledgment, never()).acknowledge();
+        org.assertj.core.api.Assertions.assertThat(meterRegistry.get("transactiq.case.event.processed")
+                        .tag("result", "failed")
+                        .counter()
+                        .count())
+                .isEqualTo(1);
     }
 
     @Test

@@ -1,4 +1,6 @@
 spring:
+  application:
+    name: authorization-service
   datasource:
     url: "${AUTHORIZATION_DB_URL:jdbc:postgresql://localhost:${TRANSACTIQ_POSTGRES_PORT:5433}/transactiq_authorization}"
     username: "${AUTHORIZATION_DB_USERNAME:transactiq_local}"
@@ -32,3 +34,23 @@ authorization:
       lease-duration: 30s
       initial-retry-backoff: 1s
       max-retry-backoff: 1m
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "health,info,prometheus"
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+        add-additional-paths: true
+  metrics:
+    tags:
+      application: "${spring.application.name}"
+
+logging:
+  structured:
+    format:
+      console: "${TRANSACTIQ_LOG_FORMAT:logstash}"

@@ -55,6 +55,9 @@ spring:
           mcp-endpoint: "/mcp"
 
 logging:
+  structured:
+    format:
+      console: "${TRANSACTIQ_LOG_FORMAT:logstash}"
   level:
     org.springframework.ai: INFO
     org.springframework.ai.openai.OpenAiChatModel: "OFF"
@@ -94,3 +97,18 @@ investigation-assistant:
     candidate-pool-size: 50
     focal-text-max-length: 2000
     excerpt-max-length: 500
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "health,info,prometheus"
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+        add-additional-paths: true
+  metrics:
+    tags:
+      application: "${spring.application.name}"

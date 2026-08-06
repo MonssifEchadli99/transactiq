@@ -30,6 +30,8 @@ Current modules:
 - `investigation-assistant-service`: Kafka-to-OpenSearch safe evidence indexer, hybrid
   (BM25 + k-NN + RRF) retrieval, structured OpenAI generation, and two read-only MCP investigation
   tools through Spring AI. Its evidence and grounded-answer capabilities are advisory only.
+- `observability-support`: shared HTTP correlation-ID and bounded Micrometer instrumentation used
+  by the deployable Spring services.
 - `fraud-contract`: versioned fraud-assessment gRPC contract.
 - `fraud-engine`: deterministic synthetic stateless and velocity fraud rules backed by Redis.
 - `event-contract`: versioned authorization-completed Protobuf contract.
@@ -115,11 +117,37 @@ Case-consumer recovery operations are documented in
 Fraud Case projection recovery is documented in
 [the projection runbook](docs/operations/fraud-case-projection-recovery.md).
 
+## Cloud deployment blueprint
+
+Cycle 7-lite adds a validation-first GCP blueprint without deploying infrastructure. Terraform in
+`infra/environments/dev` describes an immutable Artifact Registry, five dedicated Cloud Run
+services and service accounts, private networking, Cloud SQL, Memorystore, empty Secret Manager
+containers, and native Cloud Run error/latency alerts. Kafka and OpenSearch are explicit external
+managed-service inputs; the blueprint does not pretend to provision them.
+
+Pull requests and `main` run the Java 21 build, validate all five service images, and validate
+Terraform. The manual deployment workflow uses GitHub OIDC/Workload Identity Federation and
+commit-SHA image tags. It always produces a plan before an apply can cross the protected
+`transactiq-dev` environment; missing repository configuration keeps deployment disabled. No
+service-account JSON key is used.
+
+The Spring applications expose only health, liveness, readiness, info, and Prometheus management
+endpoints, with health details hidden. Logs default to structured JSON, safe request IDs propagate
+through `X-Request-Id`, and bounded metrics cover authorization, fraud, case-event, and AI
+investigation outcomes without using transaction data, evidence, or analyst content as labels.
+
+See [the GCP deployment blueprint](docs/operations/gcp-deployment-blueprint.md) for the Mermaid
+deployment diagram, complete service-to-dependency map, CI/CD flow, configuration and secret
+strategy, prerequisites, validation commands, cost-conscious defaults, and current limitations.
+
 ## Build
 
 ```powershell
 .\gradlew.bat build
-docker compose config
+docker compose config --quiet
+terraform fmt -check -recursive infra
+terraform -chdir=infra/environments/dev init -backend=false -input=false
+terraform -chdir=infra/environments/dev validate
 ```
 
 The business and API contracts are under [`docs/business`](docs/business).

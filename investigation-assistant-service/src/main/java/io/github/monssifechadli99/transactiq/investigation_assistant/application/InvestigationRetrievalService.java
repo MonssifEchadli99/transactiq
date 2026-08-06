@@ -8,6 +8,8 @@ import io.github.monssifechadli99.transactiq.investigation_assistant.domain.Foca
 import io.github.monssifechadli99.transactiq.investigation_assistant.domain.InvestigationRetrievalResult;
 import io.github.monssifechadli99.transactiq.investigation_assistant.domain.RelatedCaseGroup;
 import io.github.monssifechadli99.transactiq.investigation_assistant.domain.RetrievedSource;
+import io.github.monssifechadli99.transactiq.observability.PortfolioMetrics;
+import io.github.monssifechadli99.transactiq.observability.PortfolioMetrics.Signal;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -25,6 +27,7 @@ public final class InvestigationRetrievalService {
     private final int candidatePoolSize;
     private final int focalTextMaxLength;
     private final int excerptMaxLength;
+    private final PortfolioMetrics metrics;
 
     public InvestigationRetrievalService(
             EvidenceRetrievalPort retrievalPort,
@@ -32,14 +35,45 @@ public final class InvestigationRetrievalService {
             int candidatePoolSize,
             int focalTextMaxLength,
             int excerptMaxLength) {
+        this(
+                retrievalPort,
+                embeddingPort,
+                candidatePoolSize,
+                focalTextMaxLength,
+                excerptMaxLength,
+                PortfolioMetrics.noop());
+    }
+
+    public InvestigationRetrievalService(
+            EvidenceRetrievalPort retrievalPort,
+            EmbeddingPort embeddingPort,
+            int candidatePoolSize,
+            int focalTextMaxLength,
+            int excerptMaxLength,
+            PortfolioMetrics metrics) {
         this.retrievalPort = retrievalPort;
         this.embeddingPort = embeddingPort;
         this.candidatePoolSize = candidatePoolSize;
         this.focalTextMaxLength = focalTextMaxLength;
         this.excerptMaxLength = excerptMaxLength;
+        this.metrics = metrics;
     }
 
     public InvestigationRetrievalResult retrieve(String caseId, String question, int maxRelatedCases) {
+        try {
+            InvestigationRetrievalResult result = doRetrieve(caseId, question, maxRelatedCases);
+            metrics.increment(Signal.INVESTIGATION_RETRIEVED);
+            return result;
+        } catch (FocalEvidenceNotFoundException failure) {
+            metrics.increment(Signal.INVESTIGATION_RETRIEVAL_MISSING);
+            throw failure;
+        } catch (RuntimeException failure) {
+            metrics.increment(Signal.INVESTIGATION_RETRIEVAL_UNAVAILABLE);
+            throw failure;
+        }
+    }
+
+    private InvestigationRetrievalResult doRetrieve(String caseId, String question, int maxRelatedCases) {
         List<EvidenceHit> focalHits = retrievalPort.loadFocal(caseId);
         if (focalHits.isEmpty()) {
             throw new FocalEvidenceNotFoundException(caseId);

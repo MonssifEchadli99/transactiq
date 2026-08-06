@@ -13,12 +13,16 @@ java {
 dependencies {
     implementation(project(":event-contract"))
     implementation(project(":case-projection-contract"))
+    implementation(project(":observability-support"))
     implementation("com.google.protobuf:protobuf-java-util:3.25.8")
+    implementation("org.springframework.boot:spring-boot-starter-actuator")
     implementation("org.springframework.boot:spring-boot-starter-jdbc")
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.springframework.boot:spring-boot-starter-kafka")
     implementation("org.springframework.boot:spring-boot-starter-liquibase")
+
+    runtimeOnly("io.micrometer:micrometer-registry-prometheus")
 
     runtimeOnly("org.postgresql:postgresql")
 

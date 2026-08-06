@@ -13,6 +13,8 @@ import io.github.monssifechadli99.transactiq.fraud.domain.FraudAssessmentRequest
 import io.github.monssifechadli99.transactiq.fraud.domain.FraudAssessmentResult;
 import io.github.monssifechadli99.transactiq.fraud.domain.velocity.VelocityRequestConflictException;
 import io.github.monssifechadli99.transactiq.fraud.domain.velocity.VelocityStoreUnavailableException;
+import io.github.monssifechadli99.transactiq.observability.PortfolioMetrics;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.grpc.ManagedChannel;
 import io.grpc.Server;
 import io.grpc.Status;
@@ -22,6 +24,7 @@ import io.grpc.inprocess.InProcessServerBuilder;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.UUID;
+import java.util.List;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -39,14 +42,19 @@ class FraudAssessmentGrpcServiceErrorIntegrationTest {
     private ManagedChannel channel;
     private ThrowingFraudAssessmentUseCase useCase;
     private FraudAssessmentServiceGrpc.FraudAssessmentServiceBlockingStub stub;
+    private SimpleMeterRegistry meterRegistry;
 
     @BeforeEach
     void startInProcessServer() throws IOException {
         useCase = new ThrowingFraudAssessmentUseCase();
+        meterRegistry = new SimpleMeterRegistry();
         String serverName = InProcessServerBuilder.generateName();
         server = InProcessServerBuilder.forName(serverName)
                 .directExecutor()
-                .addService(new FraudAssessmentGrpcService(useCase, new FraudAssessmentGrpcMapper()))
+                .addService(new FraudAssessmentGrpcService(
+                        useCase,
+                        new FraudAssessmentGrpcMapper(),
+                        new PortfolioMetrics(meterRegistry)))
                 .build()
                 .start();
         channel = InProcessChannelBuilder.forName(serverName).directExecutor().build();
@@ -68,6 +76,22 @@ class FraudAssessmentGrpcServiceErrorIntegrationTest {
 
         assertEquals(Status.Code.UNAVAILABLE, exception.getStatus().getCode());
         assertFalse(exception.getStatus().getDescription().contains(CARD_TOKEN));
+        assertEquals(1, meterRegistry.get("transactiq.fraud.assessed")
+                .tag("result", "velocity_unavailable").counter().count());
+    }
+
+    @Test
+    void successfulAssessmentRecordsOnlyItsSafeBand() {
+        FraudAssessmentResult response = new FraudAssessmentResult(
+                io.github.monssifechadli99.transactiq.fraud.domain.FraudAssessment.CLEAR,
+                0,
+                List.of());
+        useCase.result = response;
+
+        stub.assess(validRequest());
+
+        assertEquals(1, meterRegistry.get("transactiq.fraud.assessed")
+                .tag("result", "clear").counter().count());
     }
 
     @Test
@@ -150,12 +174,16 @@ class FraudAssessmentGrpcServiceErrorIntegrationTest {
     private static final class ThrowingFraudAssessmentUseCase implements FraudAssessmentUseCase {
 
         private RuntimeException failure;
+        private FraudAssessmentResult result;
         private int invocationCount;
 
         @Override
         public FraudAssessmentResult assess(FraudAssessmentRequest request) {
             invocationCount++;
-            throw failure;
+            if (failure != null) {
+                throw failure;
+            }
+            return result;
         }
     }
 }
