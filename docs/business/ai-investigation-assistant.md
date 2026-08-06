@@ -200,6 +200,21 @@ zero-choice warning path can render the prompt; Spring AI MCP and MCP Java SDK l
 forced to `OFF` so protocol DEBUG logging cannot render tool arguments or results. The independent
 OpenAI SDK diagnostic guard remains `OPENAI_LOG=off` or absent.
 
+### Cycle 8 deterministic demo profile
+
+The end-to-end portfolio runner selects the exact Spring profile `demo-offline`. Only that profile
+registers the local `EmbeddingPort` and `ChatGenerationPort` fixtures and explicitly disables every
+Spring AI provider model. The embedding fixture derives a repeatable, normalized vector of the
+configured dimension from SHA-256 of the input. The answer fixture either cites a source already in
+the retrieval allowlist or returns `INSUFFICIENT_EVIDENCE`; normal server-side citation and output
+validation still runs.
+
+This profile performs no network model call and requires no fake API key. It retains the
+`OPENAI_LOG` startup guard and all request, evidence, DTO, error, integrity, and logging controls.
+Without an explicit `demo-offline` activation, the fixtures are absent and the configured OpenAI
+path retains its existing fail-closed key validation. This is reproducible demo behavior, not an
+AI-quality or latency evaluation. See the [end-to-end walkthrough](../portfolio/demo-walkthrough.md).
+
 ## Configuration
 
 The table below covers every module-owned setting plus the connection and model settings that
@@ -657,14 +672,15 @@ For a manual local rebuild and cutover:
   restrictive instructions, structured output, citation validation, and the absence of mutation
   ports or write-capable tools. The model has no autonomous case-decision authority.
 - The synthetic offline catalog is intentionally compact; no live-provider quality or latency
-  evaluation runs in CI.
+  evaluation runs in CI. The Cycle 8 `demo-offline` fixtures prove isolation and the application
+  flow, not production answer quality.
 - The MCP server is synchronous Streamable HTTP with exactly two tools. It has no MCP resources,
   prompts, completions, progressive answer streaming, downstream tool federation, conversation
   state, or agent loop.
 - Cycle 6C has no authentication or authorization and is intended for controlled local portfolio
   use. A production network boundary, per-client policy, quotas, and audit controls are not modeled.
 
-Also out of scope are write tools, case mutations, autonomous fraud decisions, a gateway,
-GCP/Terraform deployment, pgvector or another vector store, unrelated Cycle 5 changes, and
-modifications to fraud scoring, authorization decisions, or case creation/claiming/resolution
-contracts.
+Also out of scope are write tools, case mutations, autonomous fraud decisions, a gateway, an
+applied production deployment, pgvector or another vector store, and modifications to fraud
+scoring, authorization decisions, or case creation/claiming/resolution contracts. The Cycle 7-lite
+GCP/Terraform files remain an unapplied development blueprint.

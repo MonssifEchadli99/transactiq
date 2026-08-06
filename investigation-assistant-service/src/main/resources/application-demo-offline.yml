@@ -1,0 +1,13 @@
+spring:
+  config:
+    activate:
+      on-profile: "demo-offline"
+  ai:
+    model:
+      chat: none
+      embedding: none
+      image: none
+      moderation: none
+      audio:
+        speech: none
+        transcription: none

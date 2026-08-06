@@ -6,6 +6,7 @@ import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.beans.factory.config.BeanFactoryPostProcessor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Profile;
 import org.springframework.core.env.Environment;
 import org.springframework.util.StringUtils;
 
@@ -33,7 +34,7 @@ public class EmbeddingConfiguration {
     private static final String DISABLED_MODEL_VALUE = "none";
 
     @Bean
-    static BeanFactoryPostProcessor requireSafeOpenAiConfiguration(Environment environment) {
+    static BeanFactoryPostProcessor requireSafeOpenAiSdkLogging(Environment environment) {
         return beanFactory -> {
             // The OpenAI SDK reads this process environment variable directly; a Spring
             // property must never be allowed to mask an unsafe value from System.getenv().
@@ -41,7 +42,13 @@ public class EmbeddingConfiguration {
             if (sdkLogLevel != null && !OPENAI_SDK_LOG_DISABLED_VALUE.equalsIgnoreCase(sdkLogLevel)) {
                 throw new IllegalStateException(OPENAI_SDK_LOG_CONFIGURATION_ERROR);
             }
+        };
+    }
 
+    @Bean
+    @Profile("!demo-offline")
+    static BeanFactoryPostProcessor requireOpenAiApiKeys(Environment environment) {
+        return beanFactory -> {
             String effectiveApiKey = environment.containsProperty(EMBEDDING_API_KEY_PROPERTY)
                     ? environment.getProperty(EMBEDDING_API_KEY_PROPERTY)
                     : environment.getProperty(COMMON_API_KEY_PROPERTY);
@@ -62,6 +69,7 @@ public class EmbeddingConfiguration {
     }
 
     @Bean
+    @Profile("!demo-offline")
     EmbeddingPort embeddingPort(EmbeddingModel embeddingModel) {
         return new OpenAiEmbeddingAdapter(embeddingModel);
     }

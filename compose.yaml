@@ -99,6 +99,107 @@ services:
       timeout: 5s
       retries: 20
 
+  fraud-engine:
+    profiles: ["demo"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: fraud-engine
+    environment:
+      FRAUD_ENGINE_GRPC_PORT: 9090
+      FRAUD_ENGINE_MANAGEMENT_PORT: 8081
+      SPRING_DATA_REDIS_HOST: redis
+      TRANSACTIQ_REDIS_PORT: 6379
+    ports:
+      - "127.0.0.1:${TRANSACTIQ_FRAUD_MANAGEMENT_PORT:-8081}:8081"
+      - "127.0.0.1:${TRANSACTIQ_FRAUD_GRPC_PORT:-9090}:9090"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  authorization-service:
+    profiles: ["demo"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: authorization-service
+    environment:
+      AUTHORIZATION_DB_URL: jdbc:postgresql://postgres:5432/transactiq_authorization
+      AUTHORIZATION_DB_USERNAME: transactiq_local
+      AUTHORIZATION_DB_PASSWORD: transactiq_local
+      TRANSACTIQ_KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+      TRANSACTIQ_FRAUD_GRPC_HOST: fraud-engine
+      TRANSACTIQ_FRAUD_GRPC_PORT: 9090
+      TRANSACTIQ_FRAUD_GRPC_PLAINTEXT: "true"
+    ports:
+      - "127.0.0.1:${TRANSACTIQ_AUTHORIZATION_PORT:-8082}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      fraud-engine:
+        condition: service_started
+
+  case-management-service:
+    profiles: ["demo"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: case-management-service
+    environment:
+      CASE_MANAGEMENT_DB_URL: jdbc:postgresql://case-postgres:5432/transactiq_case_management
+      CASE_MANAGEMENT_DB_USERNAME: transactiq_case_local
+      CASE_MANAGEMENT_DB_PASSWORD: transactiq_case_local
+      TRANSACTIQ_KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+    ports:
+      - "127.0.0.1:${TRANSACTIQ_CASE_MANAGEMENT_PORT:-8083}:8080"
+    depends_on:
+      case-postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+
+  case-search-service:
+    profiles: ["demo"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: case-search-service
+    environment:
+      TRANSACTIQ_KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+      TRANSACTIQ_OPENSEARCH_URL: http://opensearch:9200
+    ports:
+      - "127.0.0.1:${TRANSACTIQ_CASE_SEARCH_PORT:-8084}:8080"
+    depends_on:
+      kafka:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+
+  investigation-assistant-service:
+    profiles: ["demo"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: investigation-assistant-service
+    environment:
+      SPRING_PROFILES_ACTIVE: demo-offline
+      TRANSACTIQ_KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+      TRANSACTIQ_OPENSEARCH_URL: http://opensearch:9200
+    ports:
+      - "127.0.0.1:${TRANSACTIQ_INVESTIGATION_PORT:-8085}:8080"
+    depends_on:
+      kafka:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+
 volumes:
   transactiq_authorization_postgres_data:
   transactiq_case_management_postgres_data:

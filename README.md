@@ -1,153 +1,144 @@
 # TransactIQ
 
-TransactIQ is a public portfolio project for a synthetic real-time transaction-intelligence
-platform. All cards, merchants, customers, transactions, balances, and fraud signals are
-demonstration data.
+TransactIQ is a public portfolio implementation of a real-time transaction-intelligence flow:
+authorize a synthetic payment, assess fraud, create and investigate a case, project it to search,
+and produce a citation-grounded advisory answer. It demonstrates service boundaries, reliable
+events, idempotency, safe AI integration, and a deployment blueprint—not a production payment
+processor. Every identifier and transaction in the repository is synthetic.
 
-## Current architecture
+## One-minute architecture
 
-```text
-Simulator → authorization HTTP → fraud gRPC → PostgreSQL/outbox → Kafka
-                                                                    ↓
-                                                   case management → PostgreSQL
+```mermaid
+flowchart LR
+    Client[Demo / merchant client] -->|REST authorization| Auth[Authorization]
+    Auth -->|gRPC| Fraud[Fraud engine]
+    Auth --> AuthDb[(PostgreSQL)]
+    Fraud --> Redis[(Redis velocity)]
+    Auth -->|transactional outbox| Kafka[(Kafka)]
+    Kafka --> Cases[Case management]
+    Cases --> CaseDb[(PostgreSQL)]
+    Cases -->|projection outbox| Kafka
+    Kafka --> Search[Case search]
+    Kafka --> AI[Investigation assistant]
+    Search --> OS[(OpenSearch)]
+    AI --> OS
+    Analyst[Analyst / MCP client] -->|queue, claim, resolve| Cases
+    Analyst -->|search| Search
+    Analyst -->|REST or MCP, read-only| AI
+    AI -. non-demo provider path .-> OpenAI[OpenAI]
 ```
 
-The Kotlin transaction simulator is the merchant/acquirer-side driver. It calls only
-`POST /api/v1/authorizations`; it has no dependency on service implementation classes and no
-direct access to gRPC, PostgreSQL, Redis, or Kafka. Kafka is a downstream, asynchronous channel for
-facts about completed authorizations, not an authorization ingress. The HTTP boundary owns the
-synchronous response, validation, and idempotency contract.
+The merchant path is synchronous through fraud assessment and durable authorization completion.
+Kafka is downstream: at-least-once events create a case and update independent read projections.
+PostgreSQL remains authoritative; OpenSearch is eventually consistent. AI retrieval and answers
+are advisory and cannot mutate a case.
 
-Current modules:
+## What is implemented
 
-- `authorization-service`: HTTP authorization workflow, PostgreSQL ledger/reservations, outbox,
-  fraud gRPC client, and Kafka outbox relay.
-- `case-management-service`: idempotent Kafka consumer, immutable PostgreSQL fraud-case snapshots,
-  bounded failure recovery, analyst APIs, and a transactional Fraud Case projection outbox.
-- `case-projection-contract`: versioned full-snapshot Fraud Case projection Protobuf contract.
-- `case-search-service`: Kotlin Kafka-to-OpenSearch indexer and eventually consistent Fraud Case
-  search API.
-- `investigation-assistant-service`: Kafka-to-OpenSearch safe evidence indexer, hybrid
-  (BM25 + k-NN + RRF) retrieval, structured OpenAI generation, and two read-only MCP investigation
-  tools through Spring AI. Its evidence and grounded-answer capabilities are advisory only.
-- `observability-support`: shared HTTP correlation-ID and bounded Micrometer instrumentation used
-  by the deployable Spring services.
-- `fraud-contract`: versioned fraud-assessment gRPC contract.
-- `fraud-engine`: deterministic synthetic stateless and velocity fraud rules backed by Redis.
-- `event-contract`: versioned authorization-completed Protobuf contract.
-- `transaction-simulator`: standalone Kotlin/JVM CLI for scenarios and controlled load.
+| Cycle | Portfolio increment |
+|---|---|
+| 1 | Business contracts, authorization boundaries, and Gradle multi-module foundation |
+| 2 | Deterministic authorization policy and validated HTTP vertical slice |
+| 3 | PostgreSQL ledger, balance reservations, request idempotency, and atomic completion |
+| 4 | gRPC fraud engine, six synthetic rules, Redis velocity, transactional Kafka outbox, and simulator |
+| 5 | Idempotent case creation, recovery/DLT behavior, analyst lifecycle, projection outbox, and search |
+| 6 | Safe evidence indexing, hybrid retrieval, grounded answers, and two real read-only MCP tools |
+| 7-lite | GCP/Terraform blueprint, keyless CI/CD, container validation, health, metrics, and structured logs |
+| 8 | Reproducible local walkthrough, offline AI isolation, performance smoke, portfolio docs, and threat model |
 
-## Local run
+**Stack:** Java 21, Kotlin, Spring Boot, Spring AI, Gradle, REST, gRPC/Protobuf, Kafka,
+PostgreSQL/Liquibase, Redis, OpenSearch, Docker Compose, JUnit/Testcontainers, Micrometer,
+Terraform/GCP, GitHub Actions/OIDC, and k6.
 
-Java 21 and Docker Desktop are required. From PowerShell at the repository root:
+## Run the deterministic demo
+
+Prerequisites are Java 21, Docker Desktop with Compose, and PowerShell 7 or Windows PowerShell 5.1.
+From a clean checkout, run:
 
 ```powershell
-docker compose up -d postgres case-postgres redis kafka opensearch
+.\scripts\demo\run-demo.ps1
 ```
 
-Start the two services in separate PowerShell windows:
+A thin Bash launcher is available where PowerShell 7 is installed:
 
-```powershell
-.\gradlew.bat :fraud-engine:bootRun
+```bash
+bash ./scripts/demo/run-demo.sh
 ```
 
-```powershell
-.\gradlew.bat :authorization-service:bootRun
-```
+The command uses bounded readiness polling, creates unique synthetic IDs, and retains Docker
+volumes by default. It exercises CLEAR, REVIEW, and blocking `HIGH_RISK` outcomes; follows one
+fraud case through queue, detail, claim, resolution, and search; performs evidence retrieval and a
+grounded answer; then lists and calls both MCP tools. Its explicit `demo-offline` profile uses
+deterministic local embeddings and generation and cannot contact OpenAI.
 
-Start case management in another window:
+Start with the [demo walkthrough](docs/portfolio/demo-walkthrough.md) for expected checkpoints,
+what to inspect, and troubleshooting. The [transaction simulator](docs/testing/transaction-simulator.md)
+remains available for focused authorization scenarios, and the
+[k6 smoke guide](performance/k6/README.md) describes short, configurable local traffic.
+Local smoke numbers are not production benchmarks.
 
-```powershell
-.\gradlew.bat :case-management-service:bootRun
-```
+## Interfaces and reliability boundaries
 
-Its development-only analyst API is under `/api/v1/fraud-cases`. Claim, resolution, and
-`assignment=MINE` use caller-supplied `X-Analyst-Id`; this is deliberately not authentication or
-authorization. Resolution requires `CONFIRMED_FRAUD` or `FALSE_POSITIVE` plus a normalized,
-synthetic rationale. Lifecycle-history reads do not require a fake identity header.
+- **REST authorization:** `POST /api/v1/authorizations`; returns the durable decision and supports
+  exact-request idempotency.
+- **gRPC fraud:** `transactiq.fraud.v1.FraudAssessmentService/Assess`; returns `CLEAR`, `REVIEW`, or
+  `HIGH_RISK` plus internal synthetic scoring evidence.
+- **Kafka:** `transactiq.authorization.completed.v1` carries completed facts; the compacted
+  `transactiq.fraud-case.projection.v1` carries full case snapshots. Both pipelines validate,
+  deduplicate, and use controlled retry/DLT behavior.
+- **Case REST:** `/api/v1/fraud-cases` provides queue/detail/history plus optimistic claim and
+  resolution commands. `X-Analyst-Id` is a development identity, not authentication.
+- **Search REST:** `GET /api/v1/fraud-cases/search` queries an eventually consistent OpenSearch
+  projection with filters, stable sorting, and opaque cursors.
+- **Investigation REST:** retrieval and grounded answers are under
+  `/api/v1/fraud-cases/{caseId}/investigation`. Every factual finding requires an allowed citation.
+- **MCP:** synchronous Streamable HTTP at `/mcp` exposes exactly
+  `retrieve_fraud_case_evidence` and `answer_fraud_investigation_question`; both are read-only and
+  reuse the REST application services.
 
-Start `case-search-service` with Kafka and OpenSearch available to use
-`GET /api/v1/fraud-cases/search`. It queries only the OpenSearch read alias and may lag PostgreSQL.
-Cycle 5 is complete with no authentication, UI, or AI behavior.
+Detailed contracts live in [business documentation](docs/business). The three most consequential
+design choices are indexed in [architecture decisions](docs/architecture/README.md).
 
-Start `investigation-assistant-service` with Kafka, OpenSearch, and a nonblank effective OpenAI
-key to use the read-only REST endpoints or the synchronous Streamable HTTP MCP server at
-`http://localhost:8080/mcp`. The default provider path uses
-`OPENAI_API_KEY`; explicitly configured embedding- or chat-specific keys take precedence for
-their respective calls and must themselves be nonblank. `OPENAI_LOG` must be absent or set to
-`off` so SDK diagnostics cannot bypass the service's logging controls. Chat defaults to
-`gpt-4.1-mini` with a `10s` timeout; both remain environment-configurable:
+## Engineering evidence
 
-```powershell
-$env:OPENAI_API_KEY = "<your-key>"
-$env:TRANSACTIQ_CHAT_MODEL = "gpt-4.1-mini"
-$env:TRANSACTIQ_CHAT_TIMEOUT = "10s"
-.\gradlew.bat :investigation-assistant-service:bootRun
-```
+- **Tests:** domain/unit tests, HTTP and gRPC integration tests, Kafka/PostgreSQL/OpenSearch
+  Testcontainers, protocol-level MCP tests, offline AI evaluations, observability tests, and the
+  deterministic end-to-end demo.
+- **CI/CD:** pull requests and `main` run the Java 21 build, five Docker builds, and Terraform
+  validation. Manual deployment uses GitHub OIDC/Workload Identity Federation, immutable commit
+  SHA image tags, a saved plan, and protected-environment approval before apply.
+- **GCP blueprint:** Artifact Registry, five Cloud Run services with dedicated identities, private
+  networking, Cloud SQL, Memorystore, Secret Manager containers, probes, and Cloud Run alerts.
+  Kafka and OpenSearch are honest external managed-service inputs.
+- **Observability:** liveness/readiness, safe Prometheus exposure, JSON logs, UUID request
+  correlation, and fixed low-cardinality authorization, fraud, case, and investigation metrics.
+- **Security:** synthetic fixtures only; raw card tokens, evidence, analyst questions, prompts,
+  provider payloads, credentials, and integrity markers are excluded from logs and public DTOs.
+  Evidence is untrusted data, generated citations are allow-listed server-side, and AI/MCP has no
+  mutation port. See the [threat model](docs/security/threat-model.md).
 
-It consumes the same Fraud Case projection topic as `case-search-service` under its own
-consumer group, indexes safe synthetic evidence chunks into a dedicated OpenSearch vector
-index, performs genuine hybrid (BM25 + k-NN + RRF) retrieval, and validates every generated
-finding against the retrieved source allowlist. Answers never mutate cases and return
-`INSUFFICIENT_EVIDENCE` when the available context cannot ground a factual finding; see
-[the AI investigation assistant guide](docs/business/ai-investigation-assistant.md) for the
-REST and MCP contracts, citation rules, safe-field allowlist, client configuration, offline
-evaluation, manual index cutover, and current limitations. The MCP server exposes exactly
-`retrieve_fraud_case_evidence` and `answer_fraud_investigation_question`; both reuse the existing
-in-process application services and provide no case-mutation capability. Cycle 6C adds no MCP
-authentication, so this endpoint is for controlled local use and must not be exposed to an
-untrusted network.
-
-Then run the deterministic simulator catalog in another window:
-
-```powershell
-.\gradlew.bat :transaction-simulator:run --args="--mode scenarios --run-id local-acceptance-001 --seed 42"
-```
-
-Use a clean, dedicated local environment for the stateful scenario expectations. The simulator
-never clears infrastructure state. Reusing the explicit run ID intentionally exercises stored
-authorization idempotency; using a new run ID creates new fraud velocity observations.
-
-See [the transaction simulator guide](docs/testing/transaction-simulator.md) for modes,
-configuration, scenario behavior, safe fixture aliases, reporting, and complete manual acceptance
-steps. The [authorization and event acceptance guide](docs/testing/cycle-3-manual-acceptance.md)
-shows how to inspect PostgreSQL, the outbox, and Kafka separately.
-Case-consumer recovery operations are documented in
-[the Kafka recovery runbook](docs/operations/case-management-kafka-recovery.md).
-Fraud Case projection recovery is documented in
-[the projection runbook](docs/operations/fraud-case-projection-recovery.md).
-
-## Cloud deployment blueprint
-
-Cycle 7-lite adds a validation-first GCP blueprint without deploying infrastructure. Terraform in
-`infra/environments/dev` describes an immutable Artifact Registry, five dedicated Cloud Run
-services and service accounts, private networking, Cloud SQL, Memorystore, empty Secret Manager
-containers, and native Cloud Run error/latency alerts. Kafka and OpenSearch are explicit external
-managed-service inputs; the blueprint does not pretend to provision them.
-
-Pull requests and `main` run the Java 21 build, validate all five service images, and validate
-Terraform. The manual deployment workflow uses GitHub OIDC/Workload Identity Federation and
-commit-SHA image tags. It always produces a plan before an apply can cross the protected
-`transactiq-dev` environment; missing repository configuration keeps deployment disabled. No
-service-account JSON key is used.
-
-The Spring applications expose only health, liveness, readiness, info, and Prometheus management
-endpoints, with health details hidden. Logs default to structured JSON, safe request IDs propagate
-through `X-Request-Id`, and bounded metrics cover authorization, fraud, case-event, and AI
-investigation outcomes without using transaction data, evidence, or analyst content as labels.
-
-See [the GCP deployment blueprint](docs/operations/gcp-deployment-blueprint.md) for the Mermaid
-deployment diagram, complete service-to-dependency map, CI/CD flow, configuration and secret
-strategy, prerequisites, validation commands, cost-conscious defaults, and current limitations.
-
-## Build
+## Build and validate
 
 ```powershell
-.\gradlew.bat build
+.\gradlew.bat build --console=plain
 docker compose config --quiet
 terraform fmt -check -recursive infra
 terraform -chdir=infra/environments/dev init -backend=false -input=false
 terraform -chdir=infra/environments/dev validate
+git diff --check
 ```
 
-The business and API contracts are under [`docs/business`](docs/business).
+See the [GCP deployment blueprint](docs/operations/gcp-deployment-blueprint.md) for Docker image
+validation, configuration, observability, cost-conscious defaults, and deployment prerequisites.
+No infrastructure is deployed by the local demo or CI validation workflow.
+
+## Deliberate limitations
+
+This portfolio has no UI, gateway authentication/authorization, PCI scope, real cards or people,
+production fraud model, settlement/clearing, conversation memory, autonomous decisions, or case
+reopen/reassignment. Local endpoints and `X-Analyst-Id` are unauthenticated. Kafka and OpenSearch
+are single-node local dependencies and external managed-service assumptions in GCP; OpenSearch
+authentication remains integration work. Search and investigation projections are eventually
+consistent. The GCP design is single-region, cost-conscious dev infrastructure—not HA/DR—and has
+not been applied. Production use requires the controls and decisions listed in the
+[threat model](docs/security/threat-model.md#accepted-risks-before-production).
