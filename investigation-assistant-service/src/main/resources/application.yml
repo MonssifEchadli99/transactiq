@@ -32,11 +32,34 @@ spring:
         options:
           model: "${TRANSACTIQ_EMBEDDING_MODEL:text-embedding-3-small}"
           dimensions: 1536
+    mcp:
+      server:
+        enabled: true
+        name: "transactiq-investigation-assistant"
+        version: "6C"
+        instructions: "Read-only, advisory fraud-case investigation tools over published synthetic evidence."
+        type: SYNC
+        protocol: STREAMABLE
+        annotation-scanner:
+          enabled: true
+        capabilities:
+          tool: true
+          resource: false
+          prompt: false
+          completion: false
+        resource-change-notification: false
+        tool-change-notification: false
+        prompt-change-notification: false
+        expose-mcp-client-tools: false
+        streamable-http:
+          mcp-endpoint: "/mcp"
 
 logging:
   level:
     org.springframework.ai: INFO
     org.springframework.ai.openai.OpenAiChatModel: "OFF"
+    org.springframework.ai.mcp: "OFF"
+    io.modelcontextprotocol: "OFF"
     org.springframework.web.client.DefaultRestClient: INFO
     org.springframework.web.servlet.mvc.method.annotation: INFO
     org.springframework.http.converter: INFO

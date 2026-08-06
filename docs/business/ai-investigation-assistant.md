@@ -1,4 +1,4 @@
-# AI Fraud-Investigation Assistant — Grounded Answers (Cycle 6, Increments 6A–6B)
+# AI Fraud-Investigation Assistant — Retrieval, Grounded Answers, and MCP (Cycle 6)
 
 ## Purpose and scope
 
@@ -6,6 +6,8 @@ Increment 6A provides the safe retrieval foundation: it consumes the existing Fr
 projection, produces safe synthetic evidence chunks, embeds them with OpenAI through Spring AI,
 indexes them in a dedicated OpenSearch vector index, and exposes read-only hybrid retrieval.
 Increment 6B adds one structured, grounded answer endpoint over exactly that retrieved context.
+Increment 6C exposes those same application capabilities as exactly two read-only tools on a real
+Model Context Protocol server. It does not create a second retrieval or generation path.
 
 The assistant is strictly advisory and read-only. It cannot:
 
@@ -14,9 +16,9 @@ The assistant is strictly advisory and read-only. It cannot:
 - claim or resolve a fraud case;
 - perform any other business mutation.
 
-It has no persistence, conversation history, streaming, tool access, or autonomous decision
-authority. Evidence text is untrusted data inside a delimited prompt section; text that resembles
-an instruction never changes the system rules or grants an action capability.
+It has no persistence, conversation history, streaming, write-capable tools, agent loop, or
+autonomous decision authority. Evidence text is untrusted data inside a delimited prompt section;
+text that resembles an instruction never changes the system rules or grants an action capability.
 
 PostgreSQL remains the sole business source of truth. This module's OpenSearch index is an
 eventually consistent read/retrieval projection, exactly like `case-search-service`'s index. It
@@ -44,6 +46,11 @@ An equally small `ChatGenerationPort` separates answer orchestration and validat
 Spring AI/OpenAI production adapter. Tests replace both ports with deterministic local fakes.
 There is exactly one production AI provider. There is intentionally no provider enum, factory,
 runtime provider selection, or fallback.
+
+The MCP adapter is another inbound adapter. Its tool methods delegate in-process to
+`InvestigationRetrievalService` and `InvestigationAnswerService`, so MCP clients receive the same
+retrieval, publication-integrity, grounding, citation, and provider safeguards as REST clients.
+The adapter has no write-side port and does not duplicate either application workflow.
 
 ## Safe evidence model
 
@@ -186,16 +193,17 @@ chat; otherwise chat uses the common `OPENAI_API_KEY`. The same startup validati
 tests.
 
 Analyst questions, retrieved evidence, prompts, generated summaries/findings/checks, provider
-request or response bodies, credentials, and raw exceptions are never logged. Application and
-HTTP DTO `toString()` implementations redact content so accidental structured logging cannot
+request or response bodies, credentials, and raw exceptions are never logged. Application, HTTP,
+and MCP DTO `toString()` implementations redact content so accidental structured logging cannot
 render those values. The Spring AI `OpenAiChatModel` logger is forced to `OFF` because its
-zero-choice warning path can render the prompt; the independent OpenAI SDK diagnostic guard
-remains `OPENAI_LOG=off` or absent.
+zero-choice warning path can render the prompt; Spring AI MCP and MCP Java SDK logging are also
+forced to `OFF` so protocol DEBUG logging cannot render tool arguments or results. The independent
+OpenAI SDK diagnostic guard remains `OPENAI_LOG=off` or absent.
 
 ## Configuration
 
 The table below covers every module-owned setting plus the connection and model settings that
-6A/6B explicitly override. Spring Boot relaxed binding also permits the uppercase underscore form
+6A–6C explicitly override. Spring Boot relaxed binding also permits the uppercase underscore form
 of each property (for example, `INVESTIGATION_ASSISTANT_CONSUMER_GROUP_ID`).
 
 | Property or explicit environment variable | Default | Purpose |
@@ -204,7 +212,7 @@ of each property (for example, `INVESTIGATION_ASSISTANT_CONSUMER_GROUP_ID`).
 | `spring.ai.model.chat` | `openai` | Enables the sole production chat adapter. |
 | `spring.ai.model.embedding` | `openai` | Enables the existing 6A OpenAI embedding adapter. |
 | `spring.ai.model.image`, `spring.ai.model.moderation`, `spring.ai.model.audio.speech`, `spring.ai.model.audio.transcription` | `none` | Explicitly disables unused OpenAI capabilities so the service exposes only chat and embedding model surfaces. |
-| `OPENAI_API_KEY` | Empty | Common OpenAI-key fallback. Every provider operation must have a nonblank effective key before Kafka or REST becomes ready. |
+| `OPENAI_API_KEY` | Empty | Common OpenAI-key fallback. Every provider operation must have a nonblank effective key before Kafka, REST, or MCP becomes ready. |
 | `spring.ai.openai.embedding.api-key` | Not configured | Optional Spring AI embedding-specific override. When present it takes precedence over the common key and must be nonblank after trimming. |
 | `spring.ai.openai.chat.api-key` / `SPRING_AI_OPENAI_CHAT_API_KEY` | Not configured | Optional chat-specific override. When present it takes precedence over the common key and must be nonblank after trimming. |
 | `OPENAI_LOG` | Absent or `off` | OpenAI Java SDK diagnostic logging guard. Any other value fails startup so SDK request/response bodies cannot bypass application logging controls. |
@@ -213,6 +221,12 @@ of each property (for example, `INVESTIGATION_ASSISTANT_CONSUMER_GROUP_ID`).
 | `TRANSACTIQ_CHAT_MODEL` | `gpt-4.1-mini` | The sole production chat model used for structured answer generation. |
 | `TRANSACTIQ_CHAT_TIMEOUT` / `spring.ai.openai.chat.timeout` | `10s` | Maximum time allowed by the OpenAI chat HTTP client for one generation request; the same environment value also binds the module validation property. |
 | `logging.level.org.springframework.ai.openai.OpenAiChatModel` | `OFF` | Prevents Spring AI warning paths from rendering analyst questions, evidence, or prompts. |
+| `spring.ai.mcp.server.enabled` | `true` | Enables the Cycle 6C MCP server. |
+| `spring.ai.mcp.server.name` / `version` | `transactiq-investigation-assistant` / `6C` | Stable MCP server identity advertised during protocol initialization. |
+| `spring.ai.mcp.server.type` / `protocol` | `SYNC` / `STREAMABLE` | Uses Spring AI's synchronous Streamable HTTP MCP server on the existing Spring MVC application. |
+| `spring.ai.mcp.server.streamable-http.mcp-endpoint` | `/mcp` | Single MCP protocol endpoint; it is not a renamed REST controller. |
+| MCP capabilities | Tools enabled; resources, prompts, and completions disabled | Keeps the server surface limited to the two documented read-only investigation tools. |
+| `logging.level.org.springframework.ai.mcp`, `logging.level.io.modelcontextprotocol` | `OFF` | Prevents protocol logging from exposing tool questions or evidence. |
 | `TRANSACTIQ_KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | Kafka bootstrap servers. |
 | `spring.kafka.consumer.enable-auto-commit` | `false` | Prevents offsets from advancing independently of record processing. |
 | `spring.kafka.consumer.auto-offset-reset` | `earliest` | A brand-new group starts at the earliest retained projection. |
@@ -420,6 +434,78 @@ identifier.
 Error bodies follow `case-management-service`'s existing sealed `{code}` /
 `{code, fieldErrors}` shape. Raw internal or provider exceptions are never exposed.
 
+## MCP contract
+
+Cycle 6C runs a synchronous Spring AI MCP server over Streamable HTTP on the existing Spring MVC
+process. The protocol endpoint is `http://localhost:8080/mcp`. Clients use normal MCP
+initialization, `tools/list`, and `tools/call` messages; `/mcp` is not an ordinary JSON REST
+endpoint. The server advertises tools only—MCP resources, prompts, and completions are disabled.
+
+Tool discovery returns exactly these two tools:
+
+| Tool | Required inputs | Structured output |
+|---|---|---|
+| `retrieve_fraud_case_evidence` | `caseId` (UUID string), `question` (nonblank string, at most 1,000 characters) | `caseId`, `focalSources`, and `relatedCases`; each public source contains only `sourceId`, `sourceType`, `caseId`, and `excerpt`. |
+| `answer_fraud_investigation_question` | `caseId` (UUID string), `question` (nonblank string, at most 1,000 characters) | `caseId`, `summary`, `findings`, `recommendedChecks`, and `groundingStatus`; every finding carries its resolved public `citations`. |
+
+The retrieval tool delegates directly to the 6A service with the existing five-related-case bound.
+The answer tool delegates directly to the 6B service, including its `GROUNDED` versus
+`INSUFFICIENT_EVIDENCE` rules and citation allowlist. Both tools advertise `readOnlyHint=true`,
+`destructiveHint=false`, `idempotentHint=true`, and `openWorldHint=false`. Those hints describe the
+real boundary: neither tool has a path to claim, resolve, approve, block, assign, or otherwise
+mutate a case.
+
+A Spring AI 2.0 MCP client can connect with this Streamable HTTP configuration (other clients map
+the same base URL and endpoint into their own configuration schema):
+
+```yaml
+spring:
+  ai:
+    mcp:
+      client:
+        streamable-http:
+          connections:
+            transactiq-investigation:
+              url: "http://localhost:8080"
+              endpoint: "/mcp"
+```
+
+For example, after initialization and tool discovery, the client can issue this MCP tool call:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "tools/call",
+  "params": {
+    "name": "retrieve_fraud_case_evidence",
+    "arguments": {
+      "caseId": "11111111-1111-4111-8111-111111111111",
+      "question": "Which evidence should I review first?"
+    }
+  }
+}
+```
+
+A successful retrieval has `isError=false`, the fixed text status
+`INVESTIGATION_EVIDENCE_RETRIEVED`, and safe evidence in `structuredContent`. A successful answer
+uses `INVESTIGATION_ANSWER_READY` and the answer shape above. The MCP adapter never returns a
+prompt, vector, private integrity/publication marker, credential, analyst identity, provider body,
+or raw exception.
+
+Tool failures have `isError=true`; both the text content and `structuredContent.code` contain one
+stable sanitized code:
+
+| Code | Meaning |
+|---|---|
+| `INVALID_INVESTIGATION_REQUEST` | The case ID or question is invalid. |
+| `FOCAL_EVIDENCE_NOT_FOUND` | No published focal evidence is available yet. |
+| `INVESTIGATION_RETRIEVAL_UNAVAILABLE` | Retrieval, embedding, OpenSearch, or evidence publication completeness is unavailable. |
+| `INVESTIGATION_ANSWER_UNAVAILABLE` | The provider is unavailable or generation is malformed or fails grounding validation. |
+
+Cycle 6C intentionally adds no authentication or authorization. The local endpoint must not be
+exposed to an untrusted network; adding an authenticated deployment boundary remains later work.
+
 ## Compact offline evaluation
 
 `src/test/resources/evaluation/grounded-answer-evaluation.json` is a deliberately small synthetic
@@ -440,6 +526,13 @@ The nine scenarios cover:
 This is a compact regression/evaluation asset for a portfolio increment, not a statistical model
 quality benchmark. It proves orchestration and deterministic policy enforcement; it does not score
 provider accuracy or compare models.
+
+Cycle 6C adds a compact protocol-level suite that starts the actual Streamable HTTP MCP server and
+drives real MCP initialize/session, `tools/list`, and `tools/call` JSON-RPC exchanges through a
+minimal HTTP protocol client. It verifies the exact two-tool surface, successful retrieval,
+grounded and insufficient-evidence answers, sanitized invalid and unavailable failures, DEBUG-log
+redaction, and the absence of a mutation path. Deterministic embedding and generation fakes keep
+every automated invocation offline; no test sends an OpenAI request.
 
 ## Focused verification
 
@@ -462,6 +555,9 @@ make a live provider request.
 
 # Grounded-answer orchestration, citation enforcement, REST safety, and the nine-scenario offline evaluation
 .\gradlew.bat :investigation-assistant-service:test --tests "*InvestigationAnswer*Test" --tests "*GroundedAnswerEvaluationTest"
+
+# MCP tool policy and real Streamable HTTP discovery/invocation with deterministic fakes
+.\gradlew.bat :investigation-assistant-service:test --tests "*FraudInvestigationMcpProtocolTest"
 
 # Complete module verification
 .\gradlew.bat :investigation-assistant-service:test --rerun-tasks
@@ -548,7 +644,7 @@ For a manual local rebuild and cutover:
 7. Recheck consumer lag, focal retrieval, related-case grouping, and several synthetic cases before
    retaining v1 as the rollback target. Index deletion and retention remain explicit operator work.
 
-## Current limitations and out of scope for 6B
+## Current limitations and out of scope for 6C
 
 - Citation allowlisting proves that a returned source was retrieved and that every factual finding
   names at least one such source. It does not independently prove semantic entailment between the
@@ -558,12 +654,17 @@ For a manual local rebuild and cutover:
 - Generation is one non-streaming, stateless request. There is no conversation persistence,
   history, cache, UI, authentication/authorization, or multi-provider fallback.
 - Prompt-injection resistance is bounded to treating evidence as delimited untrusted data,
-  restrictive instructions, structured output, citation validation, and the absence of tools or
-  mutation ports. The model has no autonomous case-decision authority.
+  restrictive instructions, structured output, citation validation, and the absence of mutation
+  ports or write-capable tools. The model has no autonomous case-decision authority.
 - The synthetic offline catalog is intentionally compact; no live-provider quality or latency
   evaluation runs in CI.
+- The MCP server is synchronous Streamable HTTP with exactly two tools. It has no MCP resources,
+  prompts, completions, progressive answer streaming, downstream tool federation, conversation
+  state, or agent loop.
+- Cycle 6C has no authentication or authorization and is intended for controlled local portfolio
+  use. A production network boundary, per-client policy, quotas, and audit controls are not modeled.
 
-MCP tools are reserved for Cycle 6C. Also out of scope are case mutations, autonomous fraud
-decisions, a gateway, GCP/Terraform deployment, pgvector or another vector store, unrelated Cycle
-5 changes, and modifications to fraud scoring, authorization decisions, or case
-creation/claiming/resolution contracts.
+Also out of scope are write tools, case mutations, autonomous fraud decisions, a gateway,
+GCP/Terraform deployment, pgvector or another vector store, unrelated Cycle 5 changes, and
+modifications to fraud scoring, authorization decisions, or case creation/claiming/resolution
+contracts.

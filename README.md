@@ -28,8 +28,8 @@ Current modules:
 - `case-search-service`: Kotlin Kafka-to-OpenSearch indexer and eventually consistent Fraud Case
   search API.
 - `investigation-assistant-service`: Kafka-to-OpenSearch safe evidence indexer, hybrid
-  (BM25 + k-NN + RRF) retrieval, and structured OpenAI generation through Spring AI. Its
-  grounded investigation answers are advisory and read-only.
+  (BM25 + k-NN + RRF) retrieval, structured OpenAI generation, and two read-only MCP investigation
+  tools through Spring AI. Its evidence and grounded-answer capabilities are advisory only.
 - `fraud-contract`: versioned fraud-assessment gRPC contract.
 - `fraud-engine`: deterministic synthetic stateless and velocity fraud rules backed by Redis.
 - `event-contract`: versioned authorization-completed Protobuf contract.
@@ -69,8 +69,8 @@ Start `case-search-service` with Kafka and OpenSearch available to use
 Cycle 5 is complete with no authentication, UI, or AI behavior.
 
 Start `investigation-assistant-service` with Kafka, OpenSearch, and a nonblank effective OpenAI
-key to use the read-only retrieval endpoint or
-`POST /api/v1/fraud-cases/{caseId}/investigation/answer`. The default provider path uses
+key to use the read-only REST endpoints or the synchronous Streamable HTTP MCP server at
+`http://localhost:8080/mcp`. The default provider path uses
 `OPENAI_API_KEY`; explicitly configured embedding- or chat-specific keys take precedence for
 their respective calls and must themselves be nonblank. `OPENAI_LOG` must be absent or set to
 `off` so SDK diagnostics cannot bypass the service's logging controls. Chat defaults to
@@ -89,8 +89,12 @@ index, performs genuine hybrid (BM25 + k-NN + RRF) retrieval, and validates ever
 finding against the retrieved source allowlist. Answers never mutate cases and return
 `INSUFFICIENT_EVIDENCE` when the available context cannot ground a factual finding; see
 [the AI investigation assistant guide](docs/business/ai-investigation-assistant.md) for the
-endpoint contract, citation rules, safe-field allowlist, configuration, offline evaluation,
-manual index cutover, and current limitations.
+REST and MCP contracts, citation rules, safe-field allowlist, client configuration, offline
+evaluation, manual index cutover, and current limitations. The MCP server exposes exactly
+`retrieve_fraud_case_evidence` and `answer_fraud_investigation_question`; both reuse the existing
+in-process application services and provide no case-mutation capability. Cycle 6C adds no MCP
+authentication, so this endpoint is for controlled local use and must not be exposed to an
+untrusted network.
 
 Then run the deterministic simulator catalog in another window:
 
